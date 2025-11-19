@@ -1,4 +1,4 @@
-# Task Scheduler Pro
+# Zisiny
 
 Aplicación React + TypeScript (Vite) que automatiza la planificación de tareas a partir de archivos Excel. Lee la lista de actividades con esfuerzos estimados, aplica reglas de días laborables/asuetos y exporta el mismo archivo enriquecido con las fechas de inicio y fin calculadas.
 
@@ -6,13 +6,14 @@ Para el detalle funcional revisa `docs/requisitos-tecnicos.md`.
 
 ## Características clave
 
-- Carga drag & drop de archivos `.xlsx`/`.xls` usando `react-dropzone` y `xlsx`.
+- Carga drag & drop de archivos `.xlsx` usando `react-dropzone` y `exceljs`, preservando estilos originales.
 - Configuración dinámica: fecha de inicio del proyecto, horas laborables por día, fines de semana opcionales y asuetos personalizables.
 - Algoritmo que acumula horas en la misma jornada y salta automáticamente fines de semana o feriados (ver `src/utils/scheduler.ts` y `src/utils/dateUtils.ts`).
-- Vista previa de las primeras 10 tareas procesadas y contador total.
+- Vista previa completa de las tareas procesadas con indicadores resumidos.
 - Exportación inmediata del cronograma (`Cronograma_<archivo original>.xlsx`) respetando la tabla original y añadiendo/actualizando únicamente las columnas `Fecha Inicio` y `Fecha Fin` en la misma hoja, conservando los estilos existentes.
 - Compatibilidad con múltiples nombres de columnas para “Nombre Tarea” y “Esfuerzo”; el usuario puede añadir alias directamente desde la UI para adaptarse a plantillas existentes.
 - Auto-detección de encabezados: la app busca la fila que contiene los alias configurados (aunque no esté en la primera fila) y desde ahí construye la tabla.
+- Controles UX para incluir fines de semana, ignorar filas de totales y visualizar la información del archivo cargado en todo momento.
 
 ## Requisitos del entorno
 
@@ -52,7 +53,7 @@ La importación intenta mapear automáticamente columnas equivalentes:
 - Nombre de tarea: `Nombre Tarea`, `Tarea`, `Tareas`, `Task`, `Task Name`, `Actividad`, `Descripción`, `Nombre`.
 - Esfuerzo (horas): `Esfuerzo`, `Horas`, `Horas Estimadas`, `Effort`, `Estimated Hours`, `Duración`, `Duration`.
 
-Además, si tu tabla empieza más abajo o a la derecha, la aplicación analiza todas las filas hasta encontrar una que contenga alguno de los alias anteriores y la usa como encabezado antes de procesar los datos; al exportar se mantiene el orden y los estilos originales de tus columnas y solo se agregan/actualizan `Fecha Inicio` y `Fecha Fin`.
+Además, si tu tabla empieza más abajo o a la derecha, la aplicación analiza todas las filas hasta encontrar una que contenga alguno de los alias anteriores y la usa como encabezado antes de procesar los datos; al exportar se mantiene el orden y los estilos originales de tus columnas y solo se agregan/actualizan `Fecha Inicio` y `Fecha Fin`. Para conservar estilos es necesario trabajar con archivos `.xlsx`.
 En la tarjeta “Columnas soportadas” se pueden agregar alias adicionales separados por comas; se combinan con la lista base y se aplican inmediatamente a los datos cargados.
 
 ## Documentación adicional

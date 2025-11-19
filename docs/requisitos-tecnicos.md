@@ -1,4 +1,4 @@
-# Requisitos Técnicos - Task Scheduler Pro
+# Requisitos Técnicos - Zisiny
 
 ## Descripción General
 Aplicación React para automatizar la planificación de tareas a partir de archivos Excel. Lee tareas con esfuerzos estimados y calcula fechas de inicio y fin considerando días laborables, asuetos y acumulación de horas.
@@ -11,7 +11,7 @@ Aplicación React para automatizar la planificación de tareas a partir de archi
 - **Vite 7.2.2** - Build tool y dev server
 
 ### Librerías Core
-- **xlsx (0.18.5)** - Lectura y escritura de archivos Excel (.xlsx, .xls)
+- **exceljs (4.4.0)** - Lectura/escritura de archivos Excel (.xlsx) preservando estilos
 - **date-fns (4.1.0)** - Manipulación y cálculo de fechas
 - **react-dropzone (14.3.8)** - Componente drag & drop para carga de archivos
 
@@ -155,12 +155,17 @@ Los alias personalizados se ingresan separados por comas y se combinan con la li
    - Ejemplo: "2024-12-25, 2024-01-01"
    - Descripción: Días feriados que se deben saltar
 
+5. **Ignorar Última Fila**
+   - Tipo: Boolean
+   - Descripción: Excluye la última fila del Excel (útil cuando contiene totales)
+   - Default: true
+
 ## Funcionalidades de la UI
 
 ### 1. Carga de Archivos
 - **Drag & Drop**: Arrastrar archivo Excel al área designada
 - **Click to Upload**: Selector de archivos tradicional
-- **Formatos soportados**: `.xlsx`, `.xls`
+- **Formato soportado**: `.xlsx` (para conservar estilos se recomienda trabajar únicamente con este formato)
 
 ### 2. Configuración
 - Formulario lateral con todos los parámetros

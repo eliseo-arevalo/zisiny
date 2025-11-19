@@ -1,14 +1,13 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { format, parseISO, isValid } from 'date-fns';
 import { Calendar, Upload, FileSpreadsheet, Download, Settings, Clock, Coffee, AlertCircle, AlertTriangle, ListChecks } from 'lucide-react';
 import { calculateSchedule } from '../utils/scheduler';
 import type { Task, SchedulerConfig } from '../utils/scheduler';
 import { cn } from '../lib/utils';
 
-const DEFAULT_TASK_COLUMNS = ['Nombre Tarea', 'Tarea', 'Tareas', 'Task', 'Task Name', 'Actividad', 'Descripción', 'Nombre'];
-const DEFAULT_EFFORT_COLUMNS = ['Esfuerzo', 'Horas', 'Horas Estimadas', 'Effort', 'Estimated Hours', 'Duración', 'Duration'];
+const EXCEL_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 type ColumnVariants = {
     task: string[];
@@ -23,6 +22,9 @@ type ExtractedDataset = {
     dataStartIndex: number;
     rowMappings: number[];
 };
+
+const DEFAULT_TASK_COLUMNS = ['Nombre Tarea', 'Tarea', 'Tareas', 'Task', 'Task Name', 'Actividad', 'Descripción', 'Nombre'];
+const DEFAULT_EFFORT_COLUMNS = ['Esfuerzo', 'Horas', 'Horas Estimadas', 'Effort', 'Estimated Hours', 'Duración', 'Duration'];
 
 const normalizeKey = (value: string): string =>
     value
@@ -51,6 +53,60 @@ const mergeColumnList = (defaults: string[], userInput: string): string[] => {
     });
 
     return result;
+};
+
+const worksheetToMatrix = (worksheet: ExcelJS.Worksheet): unknown[][] => {
+    const values = worksheet.getSheetValues(); // primer elemento es undefined
+    const matrix: unknown[][] = [];
+
+    for (let rowIndex = 1; rowIndex < values.length; rowIndex++) {
+        const row = values[rowIndex];
+        if (Array.isArray(row)) {
+            matrix.push(row.slice(1));
+        } else if (row && typeof row === 'object') {
+            const entries = Object.entries(row)
+                .map(([key, value]) => ({ index: Number(key), value }))
+                .filter(({ index }) => Number.isFinite(index) && index > 0);
+            const maxColumn = entries.reduce((max, entry) => Math.max(max, entry.index), 0);
+            const rowValues: unknown[] = new Array(maxColumn).fill('');
+            entries.forEach(({ index, value }) => {
+                rowValues[index - 1] = value ?? '';
+            });
+            matrix.push(rowValues);
+        } else {
+            matrix.push([]);
+        }
+    }
+
+    return matrix;
+};
+
+const parseEffortValue = (value: unknown): number | null => {
+    if (value === null || value === undefined) {
+        return null;
+    }
+
+    if (typeof value === 'object') {
+        const formulaResult = (value as { result?: unknown }).result;
+        if (formulaResult !== undefined) {
+            return parseEffortValue(formulaResult);
+        }
+    }
+
+    let candidate: unknown = value;
+    if (typeof candidate === 'string') {
+        const normalized = candidate
+            .replace(/[\sA-Za-z]/g, '')
+            .replace(/,/g, '.');
+        if (normalized.trim() === '') return null;
+        candidate = normalized;
+    }
+
+    const numberValue = Number(candidate);
+    if (Number.isFinite(numberValue) && numberValue >= 0) {
+        return numberValue;
+    }
+    return null;
 };
 
 const findColumnKey = (row: Task, aliases: string[]): string | undefined => {
@@ -175,18 +231,17 @@ const normalizeTaskDataset = (rows: Task[], columns: ColumnVariants) => {
             normalizedRow['Nombre Tarea'] = `Tarea sin nombre #${index + 1}`;
         }
 
-        if (effortKey) {
-            const parsedEffort = Number(row[effortKey]);
-            normalizedRow['Esfuerzo'] = Number.isFinite(parsedEffort) && parsedEffort >= 0 ? parsedEffort : 0;
-            if (!Number.isFinite(parsedEffort) || parsedEffort < 0) {
-                missingEffortValues += 1;
-            }
+        const rawEffortValue = effortKey ? row[effortKey] : row['Esfuerzo'];
+        const parsedEffort = parseEffortValue(rawEffortValue);
+        if (parsedEffort !== null) {
+            normalizedRow['Esfuerzo'] = parsedEffort;
         } else {
             missingEffortValues += 1;
-            normalizedRow['Esfuerzo'] = Number.isFinite(Number(row['Esfuerzo'])) ? Number(row['Esfuerzo']) : 0;
-        }
-
-        if (!Number.isFinite(Number(normalizedRow['Esfuerzo'])) || Number(normalizedRow['Esfuerzo']) < 0) {
+            console.warn(
+                'Fila sin esfuerzo válido:',
+                normalizedRow['Nombre Tarea'] || `Fila #${index + 1}`,
+                rawEffortValue
+            );
             normalizedRow['Esfuerzo'] = 0;
         }
 
@@ -231,7 +286,8 @@ export default function SchedulerApp() {
     const [rawTableRows, setRawTableRows] = useState<unknown[][]>([]);
     const [fileName, setFileName] = useState<string | null>(null);
     const [sheetName, setSheetName] = useState<string>('Cronograma');
-    const workbookRef = useRef<XLSX.WorkBook | null>(null);
+    const [skipLastRow, setSkipLastRow] = useState<boolean>(true);
+    const workbookRef = useRef<ExcelJS.Workbook | null>(null);
 
     const columnVariants = useMemo<ColumnVariants>(() => ({
         task: mergeColumnList(DEFAULT_TASK_COLUMNS, customTaskColumnsInput),
@@ -246,20 +302,23 @@ export default function SchedulerApp() {
         setFileName(file.name);
 
         const reader = new FileReader();
-        reader.onload = (e) => {
-            const data = new Uint8Array(e.target?.result as ArrayBuffer);
-            const workbook = XLSX.read(data, { type: 'array' });
-            workbookRef.current = workbook;
-            const firstSheetName = workbook.SheetNames[0];
-            const worksheet = workbook.Sheets[firstSheetName];
-            const tableRows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
-                header: 1,
-                defval: '',
-                raw: false,
-            });
-            setRawTableRows(tableRows);
-            if (firstSheetName) {
-                setSheetName(firstSheetName);
+        reader.onload = async (e) => {
+            const buffer = e.target?.result;
+            if (!buffer) return;
+
+            try {
+                const workbook = new ExcelJS.Workbook();
+                await workbook.xlsx.load(buffer as ArrayBuffer);
+                const worksheet = workbook.worksheets[0];
+                if (!worksheet) {
+                    console.error('El archivo no contiene hojas válidas.');
+                    return;
+                }
+                workbookRef.current = workbook;
+                setSheetName(worksheet.name);
+                setRawTableRows(worksheetToMatrix(worksheet));
+            } catch (error) {
+                console.error('Error al leer el archivo Excel:', error);
             }
         };
         reader.readAsArrayBuffer(file);
@@ -268,8 +327,7 @@ export default function SchedulerApp() {
     const { getRootProps, getInputProps, isDragActive } = useDropzone({
         onDrop,
         accept: {
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-            'application/vnd.ms-excel': ['.xls']
+            [EXCEL_MIME_TYPE]: ['.xlsx'],
         },
         multiple: false
     });
@@ -278,13 +336,25 @@ export default function SchedulerApp() {
         return buildDatasetFromMatrix(rawTableRows, columnVariants);
     }, [rawTableRows, columnVariants]);
 
+    const adjustedDataset = useMemo<ExtractedDataset>(() => {
+        if (!skipLastRow || extractedDataset.rows.length <= 1) {
+            return extractedDataset;
+        }
+        return {
+            ...extractedDataset,
+            rows: extractedDataset.rows.slice(0, -1),
+            rowMappings: extractedDataset.rowMappings.slice(0, -1),
+        };
+    }, [extractedDataset, skipLastRow]);
+
     const normalizationResult = useMemo(() => {
-        return normalizeTaskDataset(extractedDataset.rows, columnVariants);
-    }, [extractedDataset.rows, columnVariants]);
+        return normalizeTaskDataset(adjustedDataset.rows, columnVariants);
+    }, [adjustedDataset.rows, columnVariants]);
 
     const tasks = normalizationResult.tasks;
     const normalizationWarnings = [
-        ...extractedDataset.warnings,
+        ...adjustedDataset.warnings,
+        ...(skipLastRow ? ['Se ignoró la última fila del archivo (posible total).'] : []),
         ...normalizationResult.warnings,
     ];
 
@@ -357,48 +427,28 @@ export default function SchedulerApp() {
     }, [tasks, parsedStartDate, safeWorkHours, includeWeekends, validHolidays]);
 
     // Export Handler
-    const handleExport = () => {
+    const handleExport = async () => {
         if (processedTasks.length === 0 || !workbookRef.current) {
             return;
         }
 
         const workbook = workbookRef.current;
-        const worksheet = workbook.Sheets[sheetName];
+        const worksheet = workbook.getWorksheet(sheetName);
         if (!worksheet) {
             console.error('No se encontró la hoja original para escribir los datos.');
             return;
         }
 
-        const headerRowIndex = extractedDataset.headerIndex ?? 0;
+        const headerRowIndex = (extractedDataset.headerIndex ?? 0) + 1; // ExcelJS es 1-based
         const baseHeaderRow = extractedDataset.headerRow.length > 0
             ? [...extractedDataset.headerRow]
-            : (rawTableRows[headerRowIndex]?.map((value) => String(value ?? '').trim()) ?? []);
+            : (rawTableRows[headerRowIndex - 1]?.map((value) => String(value ?? '').trim()) ?? []);
         const headerRow = [...baseHeaderRow];
 
         const formatDateValue = (value?: Date | string) => {
             if (!value) return '';
             const dateValue = value instanceof Date ? value : new Date(value);
             return isValid(dateValue) ? format(dateValue, 'yyyy-MM-dd') : '';
-        };
-
-        const existingRange = worksheet['!ref']
-            ? XLSX.utils.decode_range(worksheet['!ref'])
-            : { s: { r: headerRowIndex, c: 0 }, e: { r: headerRowIndex, c: Math.max(headerRow.length - 1, 0) } };
-
-        let maxRowUsed = existingRange.e.r;
-        let maxColUsed = existingRange.e.c;
-
-        const updateCell = (rowIndex: number, colIndex: number, value: string) => {
-            const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
-            const existingCell = worksheet[address];
-            if (existingCell) {
-                existingCell.v = value;
-                existingCell.t = 's';
-            } else if (value !== '') {
-                worksheet[address] = { t: 's', v: value };
-            }
-            maxRowUsed = Math.max(maxRowUsed, rowIndex);
-            maxColUsed = Math.max(maxColUsed, colIndex);
         };
 
         const ensureColumnIndex = (label: string): number => {
@@ -412,7 +462,7 @@ export default function SchedulerApp() {
             } else {
                 headerRow[index] = label;
             }
-            updateCell(headerRowIndex, index, label);
+            worksheet.getRow(headerRowIndex).getCell(index + 1).value = label;
             return index;
         };
 
@@ -420,20 +470,25 @@ export default function SchedulerApp() {
         const fechaFinIndex = ensureColumnIndex('Fecha Fin');
 
         processedTasks.forEach((task, taskIndex) => {
-            const rowIndex = extractedDataset.rowMappings[taskIndex] ?? (extractedDataset.dataStartIndex + taskIndex);
+            const sourceRowIndex = adjustedDataset.rowMappings[taskIndex] ?? (adjustedDataset.dataStartIndex + taskIndex);
+            const excelRowIndex = sourceRowIndex + 1;
+            const row = worksheet.getRow(excelRowIndex);
             const fechaInicioValue = formatDateValue(task['Fecha Inicio'] as Date | string | undefined);
             const fechaFinValue = formatDateValue(task['Fecha Fin'] as Date | string | undefined);
-            updateCell(rowIndex, fechaInicioIndex, fechaInicioValue);
-            updateCell(rowIndex, fechaFinIndex, fechaFinValue);
-        });
-
-        worksheet['!ref'] = XLSX.utils.encode_range({
-            s: { r: Math.min(existingRange.s.r, headerRowIndex), c: Math.min(existingRange.s.c, 0) },
-            e: { r: Math.max(maxRowUsed, existingRange.e.r), c: Math.max(maxColUsed, existingRange.e.c, headerRow.length - 1) },
+            row.getCell(fechaInicioIndex + 1).value = fechaInicioValue || null;
+            row.getCell(fechaFinIndex + 1).value = fechaFinValue || null;
+            row.commit?.();
         });
 
         const exportFileName = `Cronograma_${fileName || 'export.xlsx'}`;
-        XLSX.writeFile(workbook, exportFileName);
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: EXCEL_MIME_TYPE });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = exportFileName;
+        link.click();
+        URL.revokeObjectURL(url);
     };
 
     return (
@@ -446,11 +501,18 @@ export default function SchedulerApp() {
                             <FileSpreadsheet className="w-6 h-6 text-white" />
                         </div>
                         <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600">
-                            Task Scheduler Pro
+                            Zisiny
                         </h1>
                     </div>
-                    <div className="text-sm text-slate-500">
-                        Automated Excel Planning
+                    <div className="text-sm text-slate-500 text-right">
+                        {fileName ? (
+                            <div>
+                                <p className="font-semibold text-slate-700">{fileName}</p>
+                                <p className="text-xs text-slate-500">Hoja activa: {sheetName}</p>
+                            </div>
+                        ) : (
+                            <span>Planificador inteligente desde Excel</span>
+                        )}
                     </div>
                 </div>
             </header>
@@ -536,20 +598,45 @@ export default function SchedulerApp() {
                                 </div>
 
                                 {/* Weekends Toggle */}
-                                <div className="flex items-center justify-between pt-2">
-                                    <label className="text-sm font-medium text-slate-700">Incluir Fines de Semana</label>
-                                    <button
-                                        onClick={() => setIncludeWeekends(!includeWeekends)}
-                                        className={cn(
-                                            "w-11 h-6 rounded-full transition-colors relative",
-                                            includeWeekends ? "bg-indigo-600" : "bg-slate-200"
-                                        )}
-                                    >
-                                        <span className={cn(
-                                            "absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform",
-                                            includeWeekends ? "translate-x-5" : "translate-x-0"
-                                        )} />
-                                    </button>
+                                <div className="space-y-1 pt-2">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-sm font-medium text-slate-700">Incluir Fines de Semana</label>
+                                        <button
+                                            onClick={() => setIncludeWeekends(!includeWeekends)}
+                                            className={cn(
+                                                "w-11 h-6 rounded-full transition-colors relative",
+                                                includeWeekends ? "bg-indigo-600" : "bg-slate-200"
+                                            )}
+                                        >
+                                            <span className={cn(
+                                                "absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform",
+                                                includeWeekends ? "translate-x-5" : "translate-x-0"
+                                            )} />
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-slate-500">Actívalo si tu equipo trabaja sábados o domingos.</p>
+                                </div>
+
+                                {/* Skip Last Row Toggle */}
+                                <div className="space-y-1">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-sm font-medium text-slate-700">Ignorar última fila (totales)</label>
+                                        <button
+                                            onClick={() => setSkipLastRow(!skipLastRow)}
+                                            className={cn(
+                                                "w-11 h-6 rounded-full transition-colors relative",
+                                                skipLastRow ? "bg-indigo-600" : "bg-slate-200"
+                                            )}
+                                        >
+                                            <span className={cn(
+                                                "absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform",
+                                                skipLastRow ? "translate-x-5" : "translate-x-0"
+                                            )} />
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-slate-500">
+                                        Útil cuando la última fila del Excel corresponde a totales o sumatorias.
+                                    </p>
                                 </div>
                             </div>
                         </div>
@@ -610,6 +697,9 @@ export default function SchedulerApp() {
                                 Asegúrate de que tu Excel tenga las columnas: <br />
                                 <code className="bg-white/50 px-1 rounded">Nombre Tarea</code> y <code className="bg-white/50 px-1 rounded">Esfuerzo</code>.
                             </p>
+                            <p className="text-xs text-indigo-600 mt-3">
+                                Para mantener estilos y formatos, sube archivos en formato <code className="bg-white/50 px-1 rounded">.xlsx</code>.
+                            </p>
                         </div>
                     </div>
 
@@ -644,32 +734,45 @@ export default function SchedulerApp() {
                         <div
                             {...getRootProps()}
                             className={cn(
-                                "border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-300 ease-in-out group",
+                                "border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-300 ease-in-out group",
                                 isDragActive
                                     ? "border-indigo-500 bg-indigo-50 scale-[1.02]"
                                     : "border-slate-300 hover:border-indigo-400 hover:bg-slate-50 bg-white"
                             )}
                         >
                             <input {...getInputProps()} />
-                            <div className="flex flex-col items-center gap-4">
-                                <div className={cn(
-                                    "p-4 rounded-full transition-colors",
-                                    isDragActive ? "bg-indigo-100" : "bg-slate-100 group-hover:bg-indigo-50"
-                                )}>
-                                    <Upload className={cn(
-                                        "w-8 h-8 transition-colors",
-                                        isDragActive ? "text-indigo-600" : "text-slate-400 group-hover:text-indigo-500"
-                                    )} />
+                            {fileName ? (
+                                <div className="space-y-3">
+                                    <p className="text-xs uppercase tracking-wide text-slate-500">Archivo cargado</p>
+                                    <p className="text-lg font-semibold text-slate-800">{fileName}</p>
+                                    <div className="flex flex-wrap gap-4 text-xs text-slate-500 justify-center">
+                                        <span>Hoja: <strong className="text-slate-700">{sheetName}</strong></span>
+                                        <span>Tareas detectadas: <strong className="text-slate-700">{tasks.length || '0'}</strong></span>
+                                        <span>Ignorar última fila: <strong className="text-slate-700">{skipLastRow ? 'Sí' : 'No'}</strong></span>
+                                    </div>
+                                    <p className="text-xs text-slate-400">Arrastra otro .xlsx para reemplazarlo o haz clic para seleccionar.</p>
                                 </div>
-                                <div>
-                                    <p className="text-lg font-medium text-slate-700">
-                                        {isDragActive ? "Suelta el archivo aquí" : "Arrastra tu Excel aquí"}
-                                    </p>
-                                    <p className="text-sm text-slate-500 mt-1">
-                                        o haz clic para seleccionar
-                                    </p>
+                            ) : (
+                                <div className="flex flex-col items-center gap-4">
+                                    <div className={cn(
+                                        "p-4 rounded-full transition-colors",
+                                        isDragActive ? "bg-indigo-100" : "bg-slate-100 group-hover:bg-indigo-50"
+                                    )}>
+                                        <Upload className={cn(
+                                            "w-8 h-8 transition-colors",
+                                            isDragActive ? "text-indigo-600" : "text-slate-400 group-hover:text-indigo-500"
+                                        )} />
+                                    </div>
+                                    <div>
+                                        <p className="text-lg font-medium text-slate-700">
+                                            {isDragActive ? "Suelta el archivo aquí" : "Arrastra tu Excel aquí"}
+                                        </p>
+                                        <p className="text-sm text-slate-500 mt-1">
+                                            o haz clic para seleccionar
+                                        </p>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                         </div>
 
                         {/* Results Preview */}
@@ -681,7 +784,7 @@ export default function SchedulerApp() {
                                         <p className="text-sm text-slate-500">{processedTasks.length} tareas procesadas</p>
                                     </div>
                                     <button
-                                        onClick={handleExport}
+                                        onClick={() => { void handleExport(); }}
                                         className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm hover:shadow-md active:scale-95"
                                     >
                                         <Download className="w-4 h-4" />
@@ -700,7 +803,7 @@ export default function SchedulerApp() {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
-                                            {processedTasks.slice(0, 10).map((task, index) => (
+                                            {processedTasks.map((task, index) => (
                                                 <tr key={index} className="hover:bg-slate-50/80 transition-colors">
                                                     <td className="px-6 py-3 font-medium text-slate-900">{task['Nombre Tarea'] || 'Sin Nombre'}</td>
                                                     <td className="px-6 py-3 text-slate-600">
@@ -718,11 +821,6 @@ export default function SchedulerApp() {
                                             ))}
                                         </tbody>
                                     </table>
-                                    {processedTasks.length > 10 && (
-                                        <div className="px-6 py-3 bg-slate-50 text-center text-xs text-slate-500 border-t border-slate-200">
-                                            Mostrando 10 de {processedTasks.length} tareas
-                                        </div>
-                                    )}
                                 </div>
                             </div>
                         )}
