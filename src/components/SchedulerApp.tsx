@@ -3,7 +3,7 @@ import { useDropzone } from 'react-dropzone';
 import ExcelJS from 'exceljs';
 import { format, parseISO, isValid, subDays } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Calendar, Upload, FileSpreadsheet, Download, Settings, Clock, Coffee, AlertCircle, AlertTriangle, ListChecks, X } from 'lucide-react';
+import { Calendar, Upload, FileSpreadsheet, Download, Settings, Clock, Coffee, AlertCircle, AlertTriangle, ListChecks, X, Loader2 } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { calculateSchedule } from '../utils/scheduler';
 import type { Task, SchedulerConfig } from '../utils/scheduler';
@@ -381,6 +381,7 @@ export default function SchedulerApp() {
     const [includeWeekends, setIncludeWeekends] = useState<boolean>(false);
     const [holidaysEntries, setHolidaysEntries] = useState<HolidayEntry[]>(() => loadHolidaysFromStorage());
     const [isHolidaysModalOpen, setIsHolidaysModalOpen] = useState<boolean>(false);
+    const [isColumnsModalOpen, setIsColumnsModalOpen] = useState<boolean>(false);
     const [newHolidayInput, setNewHolidayInput] = useState<string>('');
     const [newHolidayLabel, setNewHolidayLabel] = useState<string>('');
     const [showHolidayInputError, setShowHolidayInputError] = useState<boolean>(false);
@@ -393,6 +394,7 @@ export default function SchedulerApp() {
     const [fileName, setFileName] = useState<string | null>(null);
     const [sheetName, setSheetName] = useState<string>('Cronograma');
     const [skipLastRow, setSkipLastRow] = useState<boolean>(true);
+    const [isLoadingFile, setIsLoadingFile] = useState<boolean>(false);
     const workbookRef = useRef<ExcelJS.Workbook | null>(null);
 
     const columnVariants = useMemo<ColumnVariants>(() => ({
@@ -405,30 +407,57 @@ export default function SchedulerApp() {
         const file = acceptedFiles[0];
         if (!file) return;
 
+        setIsLoadingFile(true);
         setFileName(file.name);
 
         const reader = new FileReader();
         reader.onload = async (e) => {
             const buffer = e.target?.result;
-            if (!buffer) return;
+            if (!buffer) {
+                setIsLoadingFile(false);
+                return;
+            }
+
+            const startTime = Date.now();
+            const minLoadTime = 500; // 0.5 segundos mínimo
 
             try {
                 const workbook = new ExcelJS.Workbook();
                 await workbook.xlsx.load(buffer as ArrayBuffer);
                 const worksheet = workbook.worksheets[0];
                 if (!worksheet) {
+                    const elapsed = Date.now() - startTime;
+                    const remaining = Math.max(0, minLoadTime - elapsed);
+                    await new Promise(resolve => setTimeout(resolve, remaining));
+                    setIsLoadingFile(false);
                     toast.error('Error al procesar Excel', {
                         description: 'El archivo no contiene hojas válidas.',
                     });
                     return;
                 }
+                
+                // Procesar los datos
+                const matrix = worksheetToMatrix(worksheet);
+                
+                // Asegurar que el loading dure al menos 1.5 segundos antes de actualizar el estado
+                const elapsed = Date.now() - startTime;
+                const remaining = Math.max(0, minLoadTime - elapsed);
+                await new Promise(resolve => setTimeout(resolve, remaining));
+                
+                // Actualizar el estado después del delay
                 workbookRef.current = workbook;
                 setSheetName(worksheet.name);
-                setRawTableRows(worksheetToMatrix(worksheet));
+                setRawTableRows(matrix);
+                
+                setIsLoadingFile(false);
                 toast.success('Excel cargado exitosamente', {
                     description: `Archivo "${file.name}" procesado correctamente.`,
                 });
             } catch (error) {
+                const elapsed = Date.now() - startTime;
+                const remaining = Math.max(0, minLoadTime - elapsed);
+                await new Promise(resolve => setTimeout(resolve, remaining));
+                setIsLoadingFile(false);
                 console.error('Error al leer el archivo Excel:', error);
                 toast.error('Error al cargar Excel', {
                     description: 'No se pudo leer el archivo. Verifica que sea un archivo .xlsx válido.',
@@ -466,11 +495,9 @@ export default function SchedulerApp() {
     }, [adjustedDataset.rows, columnVariants]);
 
     const tasks = normalizationResult.tasks;
+    const lastRowIgnored = skipLastRow && fileName && extractedDataset.rows.length > adjustedDataset.rows.length;
     const normalizationWarnings = [
         ...adjustedDataset.warnings,
-        ...(skipLastRow && fileName && extractedDataset.rows.length > adjustedDataset.rows.length 
-            ? ['Se ignoró la última fila del archivo (posible total).'] 
-            : []),
         ...normalizationResult.warnings,
     ];
 
@@ -902,44 +929,21 @@ export default function SchedulerApp() {
                                 <h3 className="text-lg font-semibold text-slate-900">Columnas soportadas</h3>
                             </div>
                             <p className="text-sm text-slate-600">
-                                La app detecta automáticamente las columnas del Excel que contengan cualquiera de los nombres listados. Agrega alias si tus archivos usan etiquetas distintas.
+                                La app detecta automáticamente las columnas del Excel que contengan cualquiera de los nombres listados.
                             </p>
-                            <div className="space-y-3">
-                                <div>
-                                    <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Nombre de la tarea</p>
-                                    <div className="flex flex-wrap gap-2">
-                                        {columnVariants.task.map((column) => (
-                                            <span key={`task-${column}`} className="px-2 py-1 rounded-full bg-slate-100 text-xs font-medium text-slate-700">
-                                                {column}
-                                            </span>
-                                        ))}
-                                    </div>
-                                    <textarea
-                                        value={customTaskColumnsInput}
-                                        onChange={(e) => setCustomTaskColumnsInput(e.target.value)}
-                                        placeholder="Ej: Task Title, Work Package"
-                                        className="mt-2 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all h-20 text-sm"
-                                    />
-                                    <p className="text-xs text-slate-500">Escribe alias separados por comas.</p>
-                                </div>
-                                <div className="pt-2 border-t border-slate-100">
-                                    <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Esfuerzo (horas)</p>
-                                    <div className="flex flex-wrap gap-2">
-                                        {columnVariants.effort.map((column) => (
-                                            <span key={`effort-${column}`} className="px-2 py-1 rounded-full bg-slate-100 text-xs font-medium text-slate-700">
-                                                {column}
-                                            </span>
-                                        ))}
-                                    </div>
-                                    <textarea
-                                        value={customEffortColumnsInput}
-                                        onChange={(e) => setCustomEffortColumnsInput(e.target.value)}
-                                        placeholder="Ej: Estimated Effort, HH Totales"
-                                        className="mt-2 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all h-20 text-sm"
-                                    />
-                                    <p className="text-xs text-slate-500">Los alias se combinan con la lista base.</p>
-                                </div>
-                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsColumnsModalOpen(true)}
+                                className="w-full px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-indigo-700 font-medium text-sm transition-colors flex items-center justify-center gap-2"
+                            >
+                                <Settings className="w-4 h-4" />
+                                Configurar Columnas
+                                {(customTaskColumnsInput || customEffortColumnsInput) && (
+                                    <span className="ml-2 px-2 py-0.5 bg-indigo-200 rounded-full text-xs">
+                                        Personalizado
+                                    </span>
+                                )}
+                            </button>
                         </div>
 
                         {/* Instructions Card */}
@@ -984,47 +988,68 @@ export default function SchedulerApp() {
                             </div>
                         )}
 
-                        {/* Dropzone */}
-                        <div
-                            {...getRootProps()}
-                            className={cn(
-                                "border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-300 ease-in-out group",
-                                isDragActive
-                                    ? "border-indigo-500 bg-indigo-50 scale-[1.02]"
-                                    : "border-slate-300 hover:border-indigo-400 hover:bg-slate-50 bg-white"
-                            )}
-                        >
-                            <input {...getInputProps()} />
-                            {fileName ? (
-                                <div className="space-y-3">
-                                    <p className="text-xs uppercase tracking-wide text-slate-500">Archivo cargado</p>
-                                    <p className="text-lg font-semibold text-slate-800">{fileName}</p>
-                                    <div className="flex flex-wrap gap-4 text-xs text-slate-500 justify-center">
-                                        <span>Hoja: <strong className="text-slate-700">{sheetName}</strong></span>
-                                        <span>Tareas detectadas: <strong className="text-slate-700">{tasks.length || '0'}</strong></span>
-                                        <span>Ignorar última fila: <strong className="text-slate-700">{skipLastRow ? 'Sí' : 'No'}</strong></span>
-                                    </div>
-                                    <p className="text-xs text-slate-400">Arrastra otro .xlsx para reemplazarlo o haz clic para seleccionar.</p>
+                        {lastRowIgnored && (
+                            <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-blue-800">
+                                <div className="flex items-center gap-2 text-sm">
+                                    <AlertCircle className="w-4 h-4" />
+                                    <span>Se ignoró la última fila del archivo (posible total).</span>
                                 </div>
-                            ) : (
-                                <div className="flex flex-col items-center gap-4">
-                                    <div className={cn(
-                                        "p-4 rounded-full transition-colors",
-                                        isDragActive ? "bg-indigo-100" : "bg-slate-100 group-hover:bg-indigo-50"
-                                    )}>
-                                        <Upload className={cn(
-                                            "w-8 h-8 transition-colors",
-                                            isDragActive ? "text-indigo-600" : "text-slate-400 group-hover:text-indigo-500"
-                                        )} />
+                            </div>
+                        )}
+
+                        {/* Dropzone */}
+                        <div className="relative">
+                            <div
+                                {...getRootProps()}
+                                className={cn(
+                                    "border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-300 ease-in-out group",
+                                    isDragActive
+                                        ? "border-indigo-500 bg-indigo-50 scale-[1.02]"
+                                        : "border-slate-300 hover:border-indigo-400 hover:bg-slate-50 bg-white",
+                                    isLoadingFile && "pointer-events-none opacity-50"
+                                )}
+                            >
+                                <input {...getInputProps()} disabled={isLoadingFile} />
+                                {fileName ? (
+                                    <div className="space-y-3">
+                                        <p className="text-xs uppercase tracking-wide text-slate-500">Archivo cargado</p>
+                                        <p className="text-lg font-semibold text-slate-800">{fileName}</p>
+                                        <div className="flex flex-wrap gap-4 text-xs text-slate-500 justify-center">
+                                            <span>Hoja: <strong className="text-slate-700">{sheetName}</strong></span>
+                                            <span>Tareas detectadas: <strong className="text-slate-700">{tasks.length || '0'}</strong></span>
+                                            <span>Ignorar última fila: <strong className="text-slate-700">{skipLastRow ? 'Sí' : 'No'}</strong></span>
+                                        </div>
+                                        <p className="text-xs text-slate-400">Arrastra otro .xlsx para reemplazarlo o haz clic para seleccionar.</p>
                                     </div>
-                                    <div>
-                                        <p className="text-lg font-medium text-slate-700">
-                                            {isDragActive ? "Suelta el archivo aquí" : "Arrastra tu Excel aquí"}
-                                        </p>
-                                        <p className="text-sm text-slate-500 mt-1">
-                                            o haz clic para seleccionar
-                                        </p>
+                                ) : (
+                                    <div className="flex flex-col items-center gap-4">
+                                        <div className={cn(
+                                            "p-4 rounded-full transition-colors",
+                                            isDragActive ? "bg-indigo-100" : "bg-slate-100 group-hover:bg-indigo-50"
+                                        )}>
+                                            <Upload className={cn(
+                                                "w-8 h-8 transition-colors",
+                                                isDragActive ? "text-indigo-600" : "text-slate-400 group-hover:text-indigo-500"
+                                            )} />
+                                        </div>
+                                        <div>
+                                            <p className="text-lg font-medium text-slate-700">
+                                                {isDragActive ? "Suelta el archivo aquí" : "Arrastra tu Excel aquí"}
+                                            </p>
+                                            <p className="text-sm text-slate-500 mt-1">
+                                                o haz clic para seleccionar
+                                            </p>
+                                        </div>
                                     </div>
+                                )}
+                            </div>
+                            
+                            {/* Loading Overlay */}
+                            {isLoadingFile && (
+                                <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center z-10">
+                                    <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
+                                    <p className="text-lg font-medium text-slate-700">Procesando archivo...</p>
+                                    <p className="text-sm text-slate-500 mt-1">{fileName || 'Cargando Excel'}</p>
                                 </div>
                             )}
                         </div>
@@ -1415,6 +1440,156 @@ export default function SchedulerApp() {
                     </div>
                 </div>
             )}
+
+            {/* Columns Modal */}
+            {isColumnsModalOpen && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setIsColumnsModalOpen(false)}>
+                    <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between p-6 border-b border-slate-200">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-indigo-100 rounded-lg">
+                                    <ListChecks className="w-5 h-5 text-indigo-600" />
+                                </div>
+                                <div>
+                                    <h2 className="text-xl font-semibold text-slate-900">Configurar Columnas</h2>
+                                    <p className="text-sm text-slate-500">Define los alias para las columnas de tareas y esfuerzo</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setIsColumnsModalOpen(false)}
+                                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                                aria-label="Cerrar"
+                            >
+                                <X className="w-5 h-5 text-slate-500" />
+                            </button>
+                        </div>
+
+                        {/* Modal Content */}
+                        <div className="p-6 overflow-y-auto flex-1">
+                            <div className="space-y-6">
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                    <p className="text-sm text-blue-800">
+                                        La app detecta automáticamente las columnas del Excel que contengan cualquiera de los nombres listados. 
+                                        Agrega alias si tus archivos usan etiquetas distintas.
+                                    </p>
+                                </div>
+
+                                {/* Task Columns */}
+                                <div>
+                                    <label className="text-sm font-medium text-slate-700 block mb-3">
+                                        Nombre de la tarea
+                                    </label>
+                                    <div className="mb-3">
+                                        <p className="text-xs text-slate-500 mb-2">Columnas por defecto:</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {DEFAULT_TASK_COLUMNS.map((column) => (
+                                                <span key={`default-task-${column}`} className="px-3 py-1.5 rounded-lg bg-indigo-100 text-indigo-800 text-xs font-medium">
+                                                    {column}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    {columnVariants.task.filter(col => !DEFAULT_TASK_COLUMNS.includes(col)).length > 0 && (
+                                        <div className="mb-3">
+                                            <p className="text-xs text-slate-500 mb-2">Alias personalizados:</p>
+                                            <div className="flex flex-wrap gap-2">
+                                                {columnVariants.task.filter(col => !DEFAULT_TASK_COLUMNS.includes(col)).map((column) => (
+                                                    <span key={`custom-task-${column}`} className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-medium">
+                                                        {column}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    <textarea
+                                        value={customTaskColumnsInput}
+                                        onChange={(e) => setCustomTaskColumnsInput(e.target.value)}
+                                        placeholder="Ej: Task Title, Work Package, Actividad"
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all h-24 text-sm"
+                                    />
+                                    <p className="text-xs text-slate-500 mt-2">Escribe alias separados por comas. Se combinarán con las columnas por defecto.</p>
+                                </div>
+
+                                {/* Effort Columns */}
+                                <div className="pt-4 border-t border-slate-200">
+                                    <label className="text-sm font-medium text-slate-700 block mb-3">
+                                        Esfuerzo (horas)
+                                    </label>
+                                    <div className="mb-3">
+                                        <p className="text-xs text-slate-500 mb-2">Columnas por defecto:</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {DEFAULT_EFFORT_COLUMNS.map((column) => (
+                                                <span key={`default-effort-${column}`} className="px-3 py-1.5 rounded-lg bg-indigo-100 text-indigo-800 text-xs font-medium">
+                                                    {column}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    {columnVariants.effort.filter(col => !DEFAULT_EFFORT_COLUMNS.includes(col)).length > 0 && (
+                                        <div className="mb-3">
+                                            <p className="text-xs text-slate-500 mb-2">Alias personalizados:</p>
+                                            <div className="flex flex-wrap gap-2">
+                                                {columnVariants.effort.filter(col => !DEFAULT_EFFORT_COLUMNS.includes(col)).map((column) => (
+                                                    <span key={`custom-effort-${column}`} className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-medium">
+                                                        {column}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    <textarea
+                                        value={customEffortColumnsInput}
+                                        onChange={(e) => setCustomEffortColumnsInput(e.target.value)}
+                                        placeholder="Ej: Estimated Effort, HH Totales, Duración"
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all h-24 text-sm"
+                                    />
+                                    <p className="text-xs text-slate-500 mt-2">Escribe alias separados por comas. Se combinarán con las columnas por defecto.</p>
+                                </div>
+
+                                {/* Info Box */}
+                                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                                    <p className="text-sm text-indigo-800">
+                                        <strong>Tip:</strong> Los alias personalizados se combinan con las columnas por defecto. 
+                                        La app buscará cualquiera de estos nombres en tu Excel.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="flex items-center justify-end gap-3 p-6 border-t border-slate-200 bg-slate-50">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setCustomTaskColumnsInput('');
+                                    setCustomEffortColumnsInput('');
+                                    setIsColumnsModalOpen(false);
+                                    toast.success('Columnas restablecidas', {
+                                        description: 'Se han restablecido las columnas a los valores por defecto.',
+                                    });
+                                }}
+                                className="px-4 py-2 text-slate-700 hover:bg-slate-200 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                Restablecer
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setIsColumnsModalOpen(false);
+                                    toast.success('Configuración guardada', {
+                                        description: `Se han configurado ${columnVariants.task.length + columnVariants.effort.length} columnas.`,
+                                    });
+                                }}
+                                className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
+                            >
+                                Guardar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <Toaster position="top-right" richColors />
         </div>
     );
