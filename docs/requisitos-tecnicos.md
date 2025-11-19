@@ -119,14 +119,15 @@ El algoritmo implementa una característica clave: **acumulación de horas en el
 
 Para adaptarse a plantillas existentes, la aplicación reconoce múltiples alias para las columnas fundamentales y permite agregar más desde la UI.
 
-- **Nombre de la tarea (alias por defecto):** `Nombre Tarea`, `Tarea`, `Task`, `Task Name`, `Actividad`, `Descripción`, `Nombre`.
+- **Nombre de la tarea (alias por defecto):** `Nombre Tarea`, `Tarea`, `Tareas`, `Task`, `Task Name`, `Actividad`, `Descripción`, `Nombre`.
 - **Esfuerzo (horas) (alias por defecto):** `Esfuerzo`, `Horas`, `Horas Estimadas`, `Effort`, `Estimated Hours`, `Duración`, `Duration`.
 
 Los alias personalizados se ingresan separados por comas y se combinan con la lista base. Durante la importación se normaliza el dataset:
 
-1. Se busca la primera columna cuyo título coincida con cualquiera de los alias configurados.
-2. Si una fila no tiene nombre de tarea se asigna un identificador temporal (`Tarea sin nombre #N`).
-3. Los esfuerzos inválidos o ausentes se normalizan a `0` horas y se muestra una advertencia en la UI.
+1. Se analiza todo el archivo hasta encontrar una fila que contenga alguno de los alias (aunque no esté en la primera fila); esa fila se toma como encabezado.
+2. Se busca la primera columna cuyo título coincida con los alias configurados para nombre y esfuerzo.
+3. Si una fila no tiene nombre de tarea se asigna un identificador temporal (`Tarea sin nombre #N`).
+4. Los esfuerzos inválidos o ausentes se normalizan a `0` horas y se muestra una advertencia en la UI.
 
 ## Configuración de Usuario
 

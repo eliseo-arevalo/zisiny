@@ -7,7 +7,7 @@ import { calculateSchedule } from '../utils/scheduler';
 import type { Task, SchedulerConfig } from '../utils/scheduler';
 import { cn } from '../lib/utils';
 
-const DEFAULT_TASK_COLUMNS = ['Nombre Tarea', 'Tarea', 'Task', 'Task Name', 'Actividad', 'Descripción', 'Nombre'];
+const DEFAULT_TASK_COLUMNS = ['Nombre Tarea', 'Tarea', 'Tareas', 'Task', 'Task Name', 'Actividad', 'Descripción', 'Nombre'];
 const DEFAULT_EFFORT_COLUMNS = ['Esfuerzo', 'Horas', 'Horas Estimadas', 'Effort', 'Estimated Hours', 'Duración', 'Duration'];
 
 type ColumnVariants = {
@@ -15,7 +15,12 @@ type ColumnVariants = {
     effort: string[];
 };
 
-const normalizeKey = (value: string): string => value.trim().toLowerCase();
+const normalizeKey = (value: string): string =>
+    value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toLowerCase();
 
 const parseListInput = (value: string): string[] =>
     value
@@ -42,6 +47,84 @@ const mergeColumnList = (defaults: string[], userInput: string): string[] => {
 const findColumnKey = (row: Task, aliases: string[]): string | undefined => {
     const aliasSet = aliases.map(normalizeKey);
     return Object.keys(row).find((key) => aliasSet.includes(normalizeKey(key)));
+};
+
+const findHeaderRowIndex = (rows: unknown[][], columns: ColumnVariants): number => {
+    const taskAliases = columns.task.map(normalizeKey);
+    const effortAliases = columns.effort.map(normalizeKey);
+
+    let bestIndex = -1;
+    let bestScore = -1;
+
+    for (let index = 0; index < rows.length; index++) {
+        const row = rows[index];
+        const normalizedCells = row.map((cell) => normalizeKey(String(cell ?? '')));
+        const matchesTask = normalizedCells.some((cell) => taskAliases.includes(cell));
+        const matchesEffort = normalizedCells.some((cell) => effortAliases.includes(cell));
+        const nonEmpty = normalizedCells.some((cell) => cell.length > 0);
+        if (!nonEmpty) {
+            continue;
+        }
+
+        const score = Number(matchesTask) + Number(matchesEffort);
+        if (score > bestScore) {
+            bestScore = score;
+            bestIndex = index;
+        }
+        if (bestScore === 2) {
+            break;
+        }
+    }
+
+    return bestIndex;
+};
+
+const buildDatasetFromMatrix = (rows: unknown[][], columns: ColumnVariants) => {
+    if (rows.length === 0) {
+        return {
+            rows: [],
+            warnings: [] as string[],
+        };
+    }
+
+    const headerIndex = findHeaderRowIndex(rows, columns);
+    const warnings: string[] = [];
+    const effectiveHeaderIndex = headerIndex === -1 ? 0 : headerIndex;
+
+    if (headerIndex === -1) {
+        warnings.push('No se encontró ninguna fila con encabezados compatibles; se asumió que la primera fila es el encabezado.');
+    }
+
+    const headerRowSource = rows[effectiveHeaderIndex] ?? [];
+    const headerRow = headerRowSource.map((value, index) => {
+        const text = String(value ?? '').trim();
+        return text || `Columna ${index + 1}`;
+    });
+
+    const seenHeaders = new Map<string, number>();
+    const uniqueHeaders = headerRow.map((header) => {
+        const normalized = header || 'Columna';
+        const count = seenHeaders.get(normalized) ?? 0;
+        seenHeaders.set(normalized, count + 1);
+        return count === 0 ? normalized : `${normalized} (${count + 1})`;
+    });
+
+    const dataRows = rows.slice(Math.min(effectiveHeaderIndex + 1, rows.length));
+    const extractedRows: Task[] = dataRows
+        .map((cells) => {
+            const rowObject: Task = {};
+            cells.forEach((cell, columnIndex) => {
+                const header = uniqueHeaders[columnIndex] ?? `Columna ${columnIndex + 1}`;
+                rowObject[header] = cell ?? '';
+            });
+            return rowObject;
+        })
+        .filter((row) => Object.values(row).some((value) => String(value ?? '').trim().length > 0));
+
+    return {
+        rows: extractedRows,
+        warnings,
+    };
 };
 
 const normalizeTaskDataset = (rows: Task[], columns: ColumnVariants) => {
@@ -114,14 +197,14 @@ const normalizeTaskDataset = (rows: Task[], columns: ColumnVariants) => {
 export default function SchedulerApp() {
     // Configuration State
     const [startDate, setStartDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
-    const [workHours, setWorkHours] = useState<number>(8);
+    const [workHours, setWorkHours] = useState<string>('8');
     const [includeWeekends, setIncludeWeekends] = useState<boolean>(false);
     const [holidaysInput, setHolidaysInput] = useState<string>('');
     const [customTaskColumnsInput, setCustomTaskColumnsInput] = useState<string>('');
     const [customEffortColumnsInput, setCustomEffortColumnsInput] = useState<string>('');
 
     // Data State
-    const [rawTasks, setRawTasks] = useState<Task[]>([]);
+    const [rawTableRows, setRawTableRows] = useState<unknown[][]>([]);
     const [fileName, setFileName] = useState<string | null>(null);
 
     const columnVariants = useMemo<ColumnVariants>(() => ({
@@ -142,10 +225,12 @@ export default function SchedulerApp() {
             const workbook = XLSX.read(data, { type: 'array' });
             const sheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[sheetName];
-            const jsonData = XLSX.utils.sheet_to_json<Task>(worksheet, {
+            const tableRows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+                header: 1,
                 defval: '',
+                raw: false,
             });
-            setRawTasks(jsonData);
+            setRawTableRows(tableRows);
         };
         reader.readAsArrayBuffer(file);
     }, []);
@@ -159,35 +244,78 @@ export default function SchedulerApp() {
         multiple: false
     });
 
+    const extractedDataset = useMemo(() => {
+        return buildDatasetFromMatrix(rawTableRows, columnVariants);
+    }, [rawTableRows, columnVariants]);
+
     const normalizationResult = useMemo(() => {
-        if (rawTasks.length === 0) {
-            return {
-                tasks: [],
-                warnings: [],
-            };
-        }
-        return normalizeTaskDataset(rawTasks, columnVariants);
-    }, [rawTasks, columnVariants]);
+        return normalizeTaskDataset(extractedDataset.rows, columnVariants);
+    }, [extractedDataset.rows, columnVariants]);
 
     const tasks = normalizationResult.tasks;
-    const normalizationWarnings = normalizationResult.warnings;
+    const normalizationWarnings = [
+        ...extractedDataset.warnings,
+        ...normalizationResult.warnings,
+    ];
+
+    const parsedStartDate = useMemo(() => {
+        const parsed = parseISO(startDate);
+        return isValid(parsed) ? parsed : null;
+    }, [startDate]);
+
+    const startDateError = parsedStartDate ? '' : 'Ingresa una fecha válida en formato YYYY-MM-DD.';
+
+    const workHoursValue = Number(workHours);
+    const workHoursError = (() => {
+        if (workHours.trim() === '') {
+            return 'Ingresa la cantidad de horas por día.';
+        }
+        if (!Number.isFinite(workHoursValue)) {
+            return 'Las horas por día deben ser un número.';
+        }
+        if (workHoursValue < 1 || workHoursValue > 24) {
+            return 'Las horas deben estar entre 1 y 24.';
+        }
+        return '';
+    })();
+    const safeWorkHours = workHoursError ? null : workHoursValue;
+
+    const { validHolidays, invalidHolidayTokens } = useMemo(() => {
+        const tokens = holidaysInput
+            .split(',')
+            .map((token) => token.trim())
+            .filter(Boolean);
+
+        const valid: Date[] = [];
+        const invalid: string[] = [];
+
+        tokens.forEach((token) => {
+            const parsed = parseISO(token);
+            if (isValid(parsed)) {
+                valid.push(parsed);
+            } else {
+                invalid.push(token);
+            }
+        });
+
+        return {
+            validHolidays: valid,
+            invalidHolidayTokens: invalid,
+        };
+    }, [holidaysInput]);
+
+    const hasConfigErrors = Boolean(startDateError || workHoursError);
 
     const processedTasks = useMemo(() => {
-        if (tasks.length === 0) {
+        if (tasks.length === 0 || !parsedStartDate || safeWorkHours === null) {
             return [];
         }
 
-        const holidays = holidaysInput
-            .split(',')
-            .map((d) => d.trim())
-            .map((d) => parseISO(d))
-            .filter((d) => isValid(d));
-
         const config: SchedulerConfig = {
-            projectStartDate: parseISO(startDate),
-            holidays,
+            projectStartDate: parsedStartDate,
+            holidays: validHolidays,
             includeWeekends,
-            workHoursPerDay: workHours,
+            workHoursPerDay: safeWorkHours,
         };
 
         try {
@@ -196,7 +324,7 @@ export default function SchedulerApp() {
             console.error('Error calculating schedule:', error);
             return [];
         }
-    }, [tasks, startDate, workHours, includeWeekends, holidaysInput]);
+    }, [tasks, parsedStartDate, safeWorkHours, includeWeekends, validHolidays]);
 
     // Export Handler
     const handleExport = () => {
@@ -255,8 +383,14 @@ export default function SchedulerApp() {
                                         type="date"
                                         value={startDate}
                                         onChange={(e) => setStartDate(e.target.value)}
-                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                                        className={cn(
+                                            "w-full px-3 py-2 bg-slate-50 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all",
+                                            startDateError ? "border-rose-400" : "border-slate-200"
+                                        )}
                                     />
+                                    {startDateError && (
+                                        <p className="text-xs text-rose-600">{startDateError}</p>
+                                    )}
                                 </div>
 
                                 {/* Work Hours */}
@@ -269,9 +403,15 @@ export default function SchedulerApp() {
                                         min="1"
                                         max="24"
                                         value={workHours}
-                                        onChange={(e) => setWorkHours(Number(e.target.value))}
-                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                                        onChange={(e) => setWorkHours(e.target.value)}
+                                        className={cn(
+                                            "w-full px-3 py-2 bg-slate-50 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all",
+                                            workHoursError ? "border-rose-400" : "border-slate-200"
+                                        )}
                                     />
+                                    {workHoursError && (
+                                        <p className="text-xs text-rose-600">{workHoursError}</p>
+                                    )}
                                 </div>
 
                                 {/* Holidays */}
@@ -283,9 +423,23 @@ export default function SchedulerApp() {
                                         value={holidaysInput}
                                         onChange={(e) => setHolidaysInput(e.target.value)}
                                         placeholder="2023-12-25, 2024-01-01"
-                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all h-24 text-sm"
+                                        className={cn(
+                                            "w-full px-3 py-2 bg-slate-50 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all h-24 text-sm",
+                                            invalidHolidayTokens.length ? "border-amber-400" : "border-slate-200"
+                                        )}
                                     />
                                     <p className="text-xs text-slate-500">Separados por comas</p>
+                                    {invalidHolidayTokens.length > 0 && (
+                                        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                                            <p className="font-medium">Fechas ignoradas:</p>
+                                            <ul className="list-disc pl-4 space-y-1 mt-1">
+                                                {invalidHolidayTokens.map((token, index) => (
+                                                    <li key={`invalid-holiday-${token}-${index}`}>{token}</li>
+                                                ))}
+                                            </ul>
+                                            <p className="mt-1">Verifica el formato YYYY-MM-DD.</p>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Weekends Toggle */}
@@ -368,6 +522,16 @@ export default function SchedulerApp() {
 
                     {/* Main Content Area */}
                     <div className="lg:col-span-8 space-y-6">
+
+                        {hasConfigErrors && (
+                            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-rose-900">
+                                <p className="font-semibold">Configura los parámetros antes de calcular.</p>
+                                <ul className="list-disc pl-6 space-y-1 mt-2 text-sm">
+                                    {startDateError && <li>{startDateError}</li>}
+                                    {workHoursError && <li>{workHoursError}</li>}
+                                </ul>
+                            </div>
+                        )}
 
                         {normalizationWarnings.length > 0 && (
                             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-amber-900">

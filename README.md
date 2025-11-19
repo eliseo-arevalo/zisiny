@@ -12,6 +12,7 @@ Para el detalle funcional revisa `docs/requisitos-tecnicos.md`.
 - Vista previa de las primeras 10 tareas procesadas y contador total.
 - Exportación inmediata del cronograma (`Cronograma_<archivo original>.xlsx`) manteniendo todas las columnas originales más `Fecha Inicio` y `Fecha Fin`.
 - Compatibilidad con múltiples nombres de columnas para “Nombre Tarea” y “Esfuerzo”; el usuario puede añadir alias directamente desde la UI para adaptarse a plantillas existentes.
+- Auto-detección de encabezados: la app busca la fila que contiene los alias configurados (aunque no esté en la primera fila) y desde ahí construye la tabla.
 
 ## Requisitos del entorno
 
@@ -48,9 +49,10 @@ src/
 
 La importación intenta mapear automáticamente columnas equivalentes:
 
-- Nombre de tarea: `Nombre Tarea`, `Tarea`, `Task`, `Task Name`, `Actividad`, `Descripción`, `Nombre`.
+- Nombre de tarea: `Nombre Tarea`, `Tarea`, `Tareas`, `Task`, `Task Name`, `Actividad`, `Descripción`, `Nombre`.
 - Esfuerzo (horas): `Esfuerzo`, `Horas`, `Horas Estimadas`, `Effort`, `Estimated Hours`, `Duración`, `Duration`.
 
+Además, si tu tabla empieza más abajo o a la derecha, la aplicación analiza todas las filas hasta encontrar una que contenga alguno de los alias anteriores y la usa como encabezado antes de procesar los datos.
 En la tarjeta “Columnas soportadas” se pueden agregar alias adicionales separados por comas; se combinan con la lista base y se aplican inmediatamente a los datos cargados.
 
 ## Documentación adicional
