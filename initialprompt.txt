@@ -1,0 +1,3 @@
+recomiendame librerias para crear una app react que pueda leer un excel sacar data como nombre de tarea, esfuerzo en horas - cantidad, y en base a una fecha de inicio y listado de asuetos 
+
+calcule por cada tarea la fecha de inicio y fin de la tarea y luego escriba en el mismo excel pero en las columnas de fecha de inicio y fecha de fin
