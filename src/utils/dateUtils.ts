@@ -1,4 +1,4 @@
-import { isSaturday, isSunday, addDays, isSameDay, parseISO } from 'date-fns';
+import { isSaturday, isSunday, addDays, isSameDay } from 'date-fns';
 
 export const isWeekend = (date: Date): boolean => {
     return isSaturday(date) || isSunday(date);

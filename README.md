@@ -1,75 +1,67 @@
-# React + TypeScript + Vite
+# Task Scheduler Pro
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Aplicación React + TypeScript (Vite) que automatiza la planificación de tareas a partir de archivos Excel. Lee la lista de actividades con esfuerzos estimados, aplica reglas de días laborables/asuetos y exporta el mismo archivo enriquecido con las fechas de inicio y fin calculadas.
 
-Currently, two official plugins are available:
+Para el detalle funcional revisa `docs/requisitos-tecnicos.md`.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Características clave
 
-## React Compiler
+- Carga drag & drop de archivos `.xlsx`/`.xls` usando `react-dropzone` y `xlsx`.
+- Configuración dinámica: fecha de inicio del proyecto, horas laborables por día, fines de semana opcionales y asuetos personalizables.
+- Algoritmo que acumula horas en la misma jornada y salta automáticamente fines de semana o feriados (ver `src/utils/scheduler.ts` y `src/utils/dateUtils.ts`).
+- Vista previa de las primeras 10 tareas procesadas y contador total.
+- Exportación inmediata del cronograma (`Cronograma_<archivo original>.xlsx`) manteniendo todas las columnas originales más `Fecha Inicio` y `Fecha Fin`.
+- Compatibilidad con múltiples nombres de columnas para “Nombre Tarea” y “Esfuerzo”; el usuario puede añadir alias directamente desde la UI para adaptarse a plantillas existentes.
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+## Requisitos del entorno
 
-Note: This will impact Vite dev & build performances.
+- Node.js 22.12+
+- pnpm 8+ (recomendado) o npm 9+
+- Navegador moderno (Chrome/Edge 90+, Firefox 88+, Safari 14+)
 
-## Expanding the ESLint configuration
+## Comandos
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm install   # instala dependencias
+pnpm dev       # modo desarrollo (http://localhost:5173)
+pnpm build     # build de producción
+pnpm preview   # sirve la build
+pnpm lint      # ejecuta ESLint con TypeScript
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Estructura
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
 ```
+src/
+├── components/
+│   └── SchedulerApp.tsx      # Componente principal (UI, import/export)
+├── utils/
+│   ├── dateUtils.ts          # helpers para fines de semana/asuetos
+│   └── scheduler.ts          # algoritmo de planificación
+├── lib/
+│   └── utils.ts              # helper cn()
+├── App.tsx / main.tsx        # bootstrap React
+└── index.css                 # Tailwind base (v4)
+```
+
+## Compatibilidad de columnas
+
+La importación intenta mapear automáticamente columnas equivalentes:
+
+- Nombre de tarea: `Nombre Tarea`, `Tarea`, `Task`, `Task Name`, `Actividad`, `Descripción`, `Nombre`.
+- Esfuerzo (horas): `Esfuerzo`, `Horas`, `Horas Estimadas`, `Effort`, `Estimated Hours`, `Duración`, `Duration`.
+
+En la tarjeta “Columnas soportadas” se pueden agregar alias adicionales separados por comas; se combinan con la lista base y se aplican inmediatamente a los datos cargados.
+
+## Documentación adicional
+
+`docs/requisitos-tecnicos.md` describe:
+
+- Flujo del algoritmo de planificación.
+- Formato del Excel de entrada/salida.
+- Consideraciones de rendimiento y roadmap.
+- Requisitos de stack y comandos.
+
+---
+
+Para ideas pendientes y seguimiento de trabajo utiliza `TODO.md` en la raíz.***

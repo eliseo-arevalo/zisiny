@@ -1,8 +1,8 @@
-import { addDays, startOfDay } from 'date-fns';
+import { startOfDay } from 'date-fns';
 import { isWorkingDay, getNextWorkingDay } from './dateUtils';
 
 export interface Task {
-    [key: string]: any; // Allow other properties from Excel
+    [key: string]: unknown; // Allow other properties from Excel
     __rowNum__?: number;
     'Nombre Tarea'?: string; // Adjust based on actual Excel headers
     'Esfuerzo'?: number; // Hours
