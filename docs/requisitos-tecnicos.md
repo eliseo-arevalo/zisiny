@@ -153,7 +153,7 @@ Los alias personalizados se ingresan separados por comas y se combinan con la li
    - Tipo: String (comma-separated dates)
    - Formato: YYYY-MM-DD, YYYY-MM-DD
    - Ejemplo: "2024-12-25, 2024-01-01"
-   - Descripción: Días feriados que se deben saltar
+   - Descripción: Días feriados que se deben saltar. Por defecto se precargan los feriados nacionales de El Salvador en función del año de inicio del proyecto (incluye Semana Santa calculada dinámicamente), pero se puede editar en cualquier momento.
 
 5. **Ignorar Última Fila**
    - Tipo: Boolean

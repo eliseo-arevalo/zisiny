@@ -14,6 +14,7 @@ Para el detalle funcional revisa `docs/requisitos-tecnicos.md`.
 - Compatibilidad con múltiples nombres de columnas para “Nombre Tarea” y “Esfuerzo”; el usuario puede añadir alias directamente desde la UI para adaptarse a plantillas existentes.
 - Auto-detección de encabezados: la app busca la fila que contiene los alias configurados (aunque no esté en la primera fila) y desde ahí construye la tabla.
 - Controles UX para incluir fines de semana, ignorar filas de totales y visualizar la información del archivo cargado en todo momento.
+- Asuetos precargados: se incluyen por defecto los feriados nacionales de El Salvador (según el año de inicio del proyecto) y se recalculan dinámicamente.
 
 ## Requisitos del entorno
 
@@ -49,11 +50,10 @@ src/
 ## Compatibilidad de columnas
 
 La importación intenta mapear automáticamente columnas equivalentes:
-
 - Nombre de tarea: `Nombre Tarea`, `Tarea`, `Tareas`, `Task`, `Task Name`, `Actividad`, `Descripción`, `Nombre`.
 - Esfuerzo (horas): `Esfuerzo`, `Horas`, `Horas Estimadas`, `Effort`, `Estimated Hours`, `Duración`, `Duration`.
 
-Además, si tu tabla empieza más abajo o a la derecha, la aplicación analiza todas las filas hasta encontrar una que contenga alguno de los alias anteriores y la usa como encabezado antes de procesar los datos; al exportar se mantiene el orden y los estilos originales de tus columnas y solo se agregan/actualizan `Fecha Inicio` y `Fecha Fin`. Para conservar estilos es necesario trabajar con archivos `.xlsx`.
+Además, si tu tabla empieza más abajo o a la derecha, la aplicación analiza todas las filas hasta encontrar una que contenga alguno de los alias anteriores y la usa como encabezado antes de procesar los datos; al exportar se mantiene el orden y los estilos originales de tus columnas y solo se agregan/actualizan `Fecha Inicio` y `Fecha Fin`. Para conservar estilos es necesario trabajar con archivos `.xlsx`. Como ayuda inicial, los asuetos se precargan con los feriados nacionales de El Salvador para el año seleccionado (y se recalculan si cambias la fecha de inicio), aunque puedes sobrescribirlos en cualquier momento.
 En la tarjeta “Columnas soportadas” se pueden agregar alias adicionales separados por comas; se combinan con la lista base y se aplican inmediatamente a los datos cargados.
 
 ## Documentación adicional

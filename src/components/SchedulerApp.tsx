@@ -1,8 +1,10 @@
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import ExcelJS from 'exceljs';
-import { format, parseISO, isValid } from 'date-fns';
-import { Calendar, Upload, FileSpreadsheet, Download, Settings, Clock, Coffee, AlertCircle, AlertTriangle, ListChecks } from 'lucide-react';
+import { format, parseISO, isValid, subDays } from 'date-fns';
+import { es } from 'date-fns/locale';
+import { Calendar, Upload, FileSpreadsheet, Download, Settings, Clock, Coffee, AlertCircle, AlertTriangle, ListChecks, X } from 'lucide-react';
+import { Toaster, toast } from 'sonner';
 import { calculateSchedule } from '../utils/scheduler';
 import type { Task, SchedulerConfig } from '../utils/scheduler';
 import { cn } from '../lib/utils';
@@ -25,6 +27,79 @@ type ExtractedDataset = {
 
 const DEFAULT_TASK_COLUMNS = ['Nombre Tarea', 'Tarea', 'Tareas', 'Task', 'Task Name', 'Actividad', 'Descripción', 'Nombre'];
 const DEFAULT_EFFORT_COLUMNS = ['Esfuerzo', 'Horas', 'Horas Estimadas', 'Effort', 'Estimated Hours', 'Duración', 'Duration'];
+
+type HolidayEntry = {
+    dateString: string;
+    label?: string; // Nombre personalizado (opcional)
+    date?: Date; // Fecha parseada (opcional, solo para defaults)
+};
+
+type FixedHoliday = { month: number; day: number; label: string };
+
+const FIXED_SV_HOLIDAYS: FixedHoliday[] = [
+    { month: 0, day: 1, label: 'Año Nuevo' },
+    { month: 4, day: 1, label: 'Día del Trabajo' },
+    { month: 4, day: 10, label: 'Día de la Madre' },
+    { month: 5, day: 17, label: 'Día del Padre' },
+    { month: 7, day: 6, label: 'Fiesta de San Salvador' },
+    { month: 8, day: 15, label: 'Independencia' },
+    { month: 10, day: 2, label: 'Día de los Muertos' },
+    { month: 11, day: 25, label: 'Navidad' },
+];
+
+const getEasterDate = (year: number): Date => {
+    const a = year % 19;
+    const b = Math.floor(year / 100);
+    const c = year % 100;
+    const d = Math.floor(b / 4);
+    const e = b % 4;
+    const f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4);
+    const k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31) - 1;
+    const day = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(year, month, day);
+};
+
+const getDefaultElSalvadorHolidays = (year: number): HolidayEntry[] => {
+    const baseEntries = FIXED_SV_HOLIDAYS.map(({ month, day, label }) => {
+        const date = new Date(year, month, day);
+        return {
+            date,
+            dateString: format(date, 'yyyy-MM-dd'),
+            label,
+        };
+    });
+
+    const easterSunday = getEasterDate(year);
+    const holyWeek = [
+        { date: subDays(easterSunday, 3), label: 'Jueves Santo' },
+        { date: subDays(easterSunday, 2), label: 'Viernes Santo' },
+        { date: subDays(easterSunday, 1), label: 'Sábado Santo' },
+    ].map(({ date, label }) => ({
+        date,
+        dateString: format(date, 'yyyy-MM-dd'),
+        label,
+    }));
+
+    const uniqueMap = new Map<string, HolidayEntry>();
+    [...baseEntries, ...holyWeek].forEach((entry) => {
+        if (!uniqueMap.has(entry.dateString)) {
+            uniqueMap.set(entry.dateString, entry);
+        }
+    });
+
+    return Array.from(uniqueMap.values()).sort((a, b) => {
+        if (a.date && b.date) {
+            return a.date.getTime() - b.date.getTime();
+        }
+        return a.dateString.localeCompare(b.dateString);
+    });
+};
 
 const normalizeKey = (value: string): string =>
     value
@@ -273,12 +348,43 @@ const normalizeTaskDataset = (rows: Task[], columns: ColumnVariants) => {
     };
 };
 
+const STORAGE_KEY_HOLIDAYS = 'zisingfy-holidays';
+
+const loadHolidaysFromStorage = (): HolidayEntry[] => {
+    try {
+        const stored = localStorage.getItem(STORAGE_KEY_HOLIDAYS);
+        if (stored) {
+            return JSON.parse(stored);
+        }
+    } catch (error) {
+        console.error('Error loading holidays from storage:', error);
+    }
+    // Si no hay datos guardados, usar los por defecto
+    return getDefaultElSalvadorHolidays(new Date().getFullYear()).map(entry => ({
+        dateString: entry.dateString,
+        label: entry.label || undefined,
+    }));
+};
+
+const saveHolidaysToStorage = (holidays: HolidayEntry[]) => {
+    try {
+        localStorage.setItem(STORAGE_KEY_HOLIDAYS, JSON.stringify(holidays));
+    } catch (error) {
+        console.error('Error saving holidays to storage:', error);
+    }
+};
+
 export default function SchedulerApp() {
     // Configuration State
     const [startDate, setStartDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
     const [workHours, setWorkHours] = useState<string>('8');
     const [includeWeekends, setIncludeWeekends] = useState<boolean>(false);
-    const [holidaysInput, setHolidaysInput] = useState<string>('');
+    const [holidaysEntries, setHolidaysEntries] = useState<HolidayEntry[]>(() => loadHolidaysFromStorage());
+    const [isHolidaysModalOpen, setIsHolidaysModalOpen] = useState<boolean>(false);
+    const [newHolidayInput, setNewHolidayInput] = useState<string>('');
+    const [newHolidayLabel, setNewHolidayLabel] = useState<string>('');
+    const [showHolidayInputError, setShowHolidayInputError] = useState<boolean>(false);
+    const [editingHoliday, setEditingHoliday] = useState<string | null>(null);
     const [customTaskColumnsInput, setCustomTaskColumnsInput] = useState<string>('');
     const [customEffortColumnsInput, setCustomEffortColumnsInput] = useState<string>('');
 
@@ -311,14 +417,22 @@ export default function SchedulerApp() {
                 await workbook.xlsx.load(buffer as ArrayBuffer);
                 const worksheet = workbook.worksheets[0];
                 if (!worksheet) {
-                    console.error('El archivo no contiene hojas válidas.');
+                    toast.error('Error al procesar Excel', {
+                        description: 'El archivo no contiene hojas válidas.',
+                    });
                     return;
                 }
                 workbookRef.current = workbook;
                 setSheetName(worksheet.name);
                 setRawTableRows(worksheetToMatrix(worksheet));
+                toast.success('Excel cargado exitosamente', {
+                    description: `Archivo "${file.name}" procesado correctamente.`,
+                });
             } catch (error) {
                 console.error('Error al leer el archivo Excel:', error);
+                toast.error('Error al cargar Excel', {
+                    description: 'No se pudo leer el archivo. Verifica que sea un archivo .xlsx válido.',
+                });
             }
         };
         reader.readAsArrayBuffer(file);
@@ -354,7 +468,9 @@ export default function SchedulerApp() {
     const tasks = normalizationResult.tasks;
     const normalizationWarnings = [
         ...adjustedDataset.warnings,
-        ...(skipLastRow ? ['Se ignoró la última fila del archivo (posible total).'] : []),
+        ...(skipLastRow && fileName && extractedDataset.rows.length > adjustedDataset.rows.length 
+            ? ['Se ignoró la última fila del archivo (posible total).'] 
+            : []),
         ...normalizationResult.warnings,
     ];
 
@@ -362,6 +478,19 @@ export default function SchedulerApp() {
         const parsed = parseISO(startDate);
         return isValid(parsed) ? parsed : null;
     }, [startDate]);
+
+    const effectiveYear = parsedStartDate?.getFullYear() ?? new Date().getFullYear();
+    const defaultHolidayEntries = useMemo(() => getDefaultElSalvadorHolidays(effectiveYear), [effectiveYear]);
+    const defaultHolidayLabelMap = useMemo(() => {
+        const map = new Map<string, string>();
+        defaultHolidayEntries.forEach((entry) => {
+            if (entry.label) {
+                map.set(entry.dateString, entry.label);
+            }
+        });
+        return map;
+    }, [defaultHolidayEntries]);
+    const configuredHolidayCount = holidaysEntries.length;
 
     const startDateError = parsedStartDate ? '' : 'Ingresa una fecha válida en formato YYYY-MM-DD.';
 
@@ -380,6 +509,16 @@ export default function SchedulerApp() {
     })();
     const safeWorkHours = workHoursError ? null : workHoursValue;
 
+    // Convertir holidaysEntries a string para compatibilidad con la lógica existente
+    const holidaysInput = useMemo(() => {
+        return holidaysEntries.map(entry => entry.dateString).join(', ');
+    }, [holidaysEntries]);
+
+    // Guardar en localStorage cuando cambien los asuetos
+    useEffect(() => {
+        saveHolidaysToStorage(holidaysEntries);
+    }, [holidaysEntries]);
+
     const { validHolidays, invalidHolidayTokens } = useMemo(() => {
         const tokens = holidaysInput
             .split(',')
@@ -388,11 +527,13 @@ export default function SchedulerApp() {
 
         const valid: Date[] = [];
         const invalid: string[] = [];
+        const dateStrings: string[] = [];
 
         tokens.forEach((token) => {
             const parsed = parseISO(token);
             if (isValid(parsed)) {
                 valid.push(parsed);
+                dateStrings.push(token);
             } else {
                 invalid.push(token);
             }
@@ -401,8 +542,111 @@ export default function SchedulerApp() {
         return {
             validHolidays: valid,
             invalidHolidayTokens: invalid,
+            holidayDateStrings: dateStrings,
         };
     }, [holidaysInput]);
+
+    const addHoliday = useCallback((dateString: string, label?: string) => {
+        const trimmed = dateString.trim();
+        if (!trimmed) return;
+
+        // Validar antes de agregar
+        const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+        if (!datePattern.test(trimmed)) {
+            setShowHolidayInputError(true);
+            return;
+        }
+
+        const parsed = parseISO(trimmed);
+        if (!isValid(parsed)) {
+            setShowHolidayInputError(true);
+            return;
+        }
+
+        // Verificar que no esté ya agregada
+        if (holidaysEntries.some(entry => entry.dateString === trimmed)) {
+            setShowHolidayInputError(true);
+            return;
+        }
+
+        // Agregar la fecha con su nombre
+        const newEntry: HolidayEntry = {
+            dateString: trimmed,
+            label: label?.trim() || undefined,
+        };
+        setHolidaysEntries([...holidaysEntries, newEntry].sort((a, b) => 
+            a.dateString.localeCompare(b.dateString)
+        ));
+        setNewHolidayInput('');
+        setNewHolidayLabel('');
+        setShowHolidayInputError(false);
+    }, [holidaysEntries]);
+
+    const removeHoliday = useCallback((dateString: string) => {
+        setHolidaysEntries(holidaysEntries.filter(entry => entry.dateString !== dateString));
+    }, [holidaysEntries]);
+
+    const updateHolidayLabel = useCallback((dateString: string, label: string) => {
+        setHolidaysEntries(holidaysEntries.map(entry => 
+            entry.dateString === dateString 
+                ? { ...entry, label: label.trim() || undefined }
+                : entry
+        ));
+        setEditingHoliday(null);
+    }, [holidaysEntries]);
+
+    // Función para formatear el input con guiones automáticamente
+    const formatDateInput = useCallback((value: string): string => {
+        // Remover todo lo que no sean dígitos
+        const digits = value.replace(/\D/g, '');
+        
+        // Limitar a 8 dígitos (YYYYMMDD)
+        const limited = digits.slice(0, 8);
+        
+        // Agregar guiones en las posiciones correctas
+        if (limited.length <= 4) {
+            return limited;
+        } else if (limited.length <= 6) {
+            return `${limited.slice(0, 4)}-${limited.slice(4)}`;
+        } else {
+            return `${limited.slice(0, 4)}-${limited.slice(4, 6)}-${limited.slice(6)}`;
+        }
+    }, []);
+
+    // Validación del input de nueva fecha
+    const newHolidayInputError = useMemo(() => {
+        if (!newHolidayInput.trim()) return null;
+        
+        // Solo mostrar error si el formato está completo (10 caracteres) o si se intentó guardar
+        const isComplete = newHolidayInput.trim().length === 10;
+        if (!isComplete && !showHolidayInputError) {
+            return null;
+        }
+        
+        // Verificar formato YYYY-MM-DD
+        const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+        if (!datePattern.test(newHolidayInput.trim())) {
+            return 'Formato inválido. Usa YYYY-MM-DD (ej: 2025-01-15)';
+        }
+        
+        // Verificar que sea una fecha válida
+        const parsed = parseISO(newHolidayInput.trim());
+        if (!isValid(parsed)) {
+            return 'Fecha inválida. Verifica que el día y mes sean correctos.';
+        }
+        
+        // Verificar que no esté ya agregada
+        const currentDates = holidaysInput
+            .split(',')
+            .map((token) => token.trim())
+            .filter(Boolean);
+        
+        if (currentDates.includes(newHolidayInput.trim())) {
+            return 'Esta fecha ya está agregada.';
+        }
+        
+        return null;
+    }, [newHolidayInput, holidaysInput, showHolidayInputError]);
 
     const hasConfigErrors = Boolean(startDateError || workHoursError);
 
@@ -425,6 +669,19 @@ export default function SchedulerApp() {
             return [];
         }
     }, [tasks, parsedStartDate, safeWorkHours, includeWeekends, validHolidays]);
+
+    // Notificar cuando se procesen las tareas
+    const hasProcessedRef = useRef(false);
+    useEffect(() => {
+        if (processedTasks.length > 0 && tasks.length > 0 && !hasProcessedRef.current) {
+            hasProcessedRef.current = true;
+            toast.success('Tareas procesadas exitosamente', {
+                description: `Se calcularon las fechas para ${processedTasks.length} tareas.`,
+            });
+        } else if (processedTasks.length === 0 && tasks.length === 0) {
+            hasProcessedRef.current = false;
+        }
+    }, [processedTasks.length, tasks.length]);
 
     // Export Handler
     const handleExport = async () => {
@@ -489,6 +746,10 @@ export default function SchedulerApp() {
         link.download = exportFileName;
         link.click();
         URL.revokeObjectURL(url);
+        
+        toast.success('Archivo descargado exitosamente', {
+            description: `El archivo "${exportFileName}" se ha descargado correctamente.`,
+        });
     };
 
     return (
@@ -572,29 +833,22 @@ export default function SchedulerApp() {
                                 {/* Holidays */}
                                 <div className="space-y-2">
                                     <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-                                        <Coffee className="w-4 h-4" /> Asuetos (YYYY-MM-DD)
+                                        <Coffee className="w-4 h-4" /> Asuetos
                                     </label>
-                                    <textarea
-                                        value={holidaysInput}
-                                        onChange={(e) => setHolidaysInput(e.target.value)}
-                                        placeholder="2023-12-25, 2024-01-01"
-                                        className={cn(
-                                            "w-full px-3 py-2 bg-slate-50 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all h-24 text-sm",
-                                            invalidHolidayTokens.length ? "border-amber-400" : "border-slate-200"
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsHolidaysModalOpen(true)}
+                                        className="w-full px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-indigo-700 font-medium text-sm transition-colors flex items-center justify-center gap-2"
+                                    >
+                                        <Settings className="w-4 h-4" />
+                                        Configurar Asuetos
+                                        {configuredHolidayCount > 0 && (
+                                            <span className="ml-2 px-2 py-0.5 bg-indigo-200 rounded-full text-xs">
+                                                {configuredHolidayCount} configurados
+                                            </span>
                                         )}
-                                    />
-                                    <p className="text-xs text-slate-500">Separados por comas</p>
-                                    {invalidHolidayTokens.length > 0 && (
-                                        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
-                                            <p className="font-medium">Fechas ignoradas:</p>
-                                            <ul className="list-disc pl-4 space-y-1 mt-1">
-                                                {invalidHolidayTokens.map((token, index) => (
-                                                    <li key={`invalid-holiday-${token}-${index}`}>{token}</li>
-                                                ))}
-                                            </ul>
-                                            <p className="mt-1">Verifica el formato YYYY-MM-DD.</p>
-                                        </div>
-                                    )}
+                                    </button>
+                                    <p className="text-xs text-slate-500">Define los días no laborables del proyecto</p>
                                 </div>
 
                                 {/* Weekends Toggle */}
@@ -812,10 +1066,10 @@ export default function SchedulerApp() {
                                                         </span>
                                                     </td>
                                                     <td className="px-6 py-3 text-slate-600">
-                                                        {task['Fecha Inicio'] ? format(task['Fecha Inicio'], 'dd MMM yyyy') : '-'}
+                                                        {task['Fecha Inicio'] ? format(task['Fecha Inicio'], 'dd MMM yyyy', { locale: es }) : '-'}
                                                     </td>
                                                     <td className="px-6 py-3 text-slate-600">
-                                                        {task['Fecha Fin'] ? format(task['Fecha Fin'], 'dd MMM yyyy') : '-'}
+                                                        {task['Fecha Fin'] ? format(task['Fecha Fin'], 'dd MMM yyyy', { locale: es }) : '-'}
                                                     </td>
                                                 </tr>
                                             ))}
@@ -840,6 +1094,328 @@ export default function SchedulerApp() {
                     </div>
                 </div>
             </main>
+
+            {/* Holidays Modal */}
+            {isHolidaysModalOpen && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => {
+                    setIsHolidaysModalOpen(false);
+                    setNewHolidayInput('');
+                    setNewHolidayLabel('');
+                    setShowHolidayInputError(false);
+                }}>
+                    <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between p-6 border-b border-slate-200">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-indigo-100 rounded-lg">
+                                    <Coffee className="w-5 h-5 text-indigo-600" />
+                                </div>
+                                <div>
+                                    <h2 className="text-xl font-semibold text-slate-900">Configurar Asuetos</h2>
+                                    <p className="text-sm text-slate-500">Define los días no laborables del proyecto</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setIsHolidaysModalOpen(false);
+                                    setNewHolidayInput('');
+                                    setNewHolidayLabel('');
+                                    setShowHolidayInputError(false);
+                                }}
+                                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                                aria-label="Cerrar"
+                            >
+                                <X className="w-5 h-5 text-slate-500" />
+                            </button>
+                        </div>
+
+                        {/* Modal Content */}
+                        <div className="p-6 overflow-y-auto flex-1">
+                            <div className="space-y-4">
+                                {/* Input para agregar nueva fecha */}
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="text-sm font-medium text-slate-700 block mb-2">
+                                            Agregar fecha de asueto (YYYY-MM-DD)
+                                        </label>
+                                        <div className="flex gap-2">
+                                            <div className="flex-1">
+                                                <input
+                                                    type="text"
+                                                    value={newHolidayInput}
+                                                    onChange={(e) => {
+                                                        const formatted = formatDateInput(e.target.value);
+                                                        setNewHolidayInput(formatted);
+                                                        // Resetear el error cuando el usuario empiece a escribir
+                                                        if (showHolidayInputError && formatted.length < 10) {
+                                                            setShowHolidayInputError(false);
+                                                        }
+                                                    }}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter' && !newHolidayInputError && newHolidayInput.trim().length === 10) {
+                                                            e.preventDefault();
+                                                            addHoliday(newHolidayInput, newHolidayLabel);
+                                                        } else if (e.key === 'Enter') {
+                                                            e.preventDefault();
+                                                            setShowHolidayInputError(true);
+                                                        }
+                                                    }}
+                                                    placeholder="YYYY-MM-DD"
+                                                    className={cn(
+                                                        "w-full px-4 py-2.5 bg-slate-50 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm font-mono",
+                                                        newHolidayInputError
+                                                            ? "border-red-400 focus:ring-red-500 focus:border-red-500"
+                                                            : "border-slate-200"
+                                                    )}
+                                                />
+                                                {newHolidayInputError && (
+                                                    <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1">
+                                                        <AlertCircle className="w-3.5 h-3.5" />
+                                                        {newHolidayInputError}
+                                                    </p>
+                                                )}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    if (newHolidayInput.trim().length === 10) {
+                                                        setShowHolidayInputError(true);
+                                                    }
+                                                    addHoliday(newHolidayInput, newHolidayLabel);
+                                                }}
+                                                disabled={!newHolidayInput.trim()}
+                                                className={cn(
+                                                    "px-6 py-2.5 rounded-lg transition-colors text-sm font-medium",
+                                                    !newHolidayInput.trim()
+                                                        ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                                                        : "bg-indigo-600 text-white hover:bg-indigo-700"
+                                                )}
+                                            >
+                                                Agregar
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-slate-700 block mb-2">
+                                            Nombre del asueto (opcional)
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={newHolidayLabel}
+                                            onChange={(e) => setNewHolidayLabel(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' && !newHolidayInputError && newHolidayInput.trim().length === 10) {
+                                                    e.preventDefault();
+                                                    addHoliday(newHolidayInput, newHolidayLabel);
+                                                }
+                                            }}
+                                            placeholder="Ej: Día de la Independencia"
+                                            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm"
+                                        />
+                                    </div>
+                                    {!newHolidayInputError && (
+                                        <p className="text-xs text-slate-500">Presiona Enter o haz clic en "Agregar" para añadir la fecha</p>
+                                    )}
+                                </div>
+
+                                {/* Tags de feriados activos */}
+                                {holidaysEntries.length > 0 && (
+                                    <div>
+                                        <p className="text-sm font-medium text-slate-700 mb-3">
+                                            Asuetos configurados ({holidaysEntries.length}):
+                                        </p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {holidaysEntries.map((entry) => {
+                                                const date = parseISO(entry.dateString);
+                                                const defaultLabel = defaultHolidayLabelMap.get(entry.dateString);
+                                                const isDefault = defaultLabel !== undefined;
+                                                const displayLabel = entry.label || defaultLabel || '';
+                                                const isEditing = editingHoliday === entry.dateString;
+                                                
+                                                return (
+                                                    <div
+                                                        key={`holiday-${entry.dateString}`}
+                                                        className="group relative"
+                                                    >
+                                                        {isEditing ? (
+                                                            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-300">
+                                                                <input
+                                                                    type="text"
+                                                                    defaultValue={entry.label || ''}
+                                                                    onBlur={(e) => updateHolidayLabel(entry.dateString, e.target.value)}
+                                                                    onKeyDown={(e) => {
+                                                                        if (e.key === 'Enter') {
+                                                                            updateHolidayLabel(entry.dateString, e.currentTarget.value);
+                                                                        } else if (e.key === 'Escape') {
+                                                                            setEditingHoliday(null);
+                                                                        }
+                                                                    }}
+                                                                    autoFocus
+                                                                    className="bg-white px-2 py-1 rounded text-sm outline-none border border-indigo-400 min-w-[120px]"
+                                                                    placeholder="Nombre del asueto"
+                                                                />
+                                                            </div>
+                                                        ) : (
+                                                            <span
+                                                                className={cn(
+                                                                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                                                                    isDefault
+                                                                        ? "bg-indigo-100 text-indigo-800 cursor-help"
+                                                                        : "bg-slate-100 text-slate-700"
+                                                                )}
+                                                                title={displayLabel}
+                                                            >
+                                                                <span>{format(date, 'dd MMM yyyy', { locale: es })}</span>
+                                                                {displayLabel && (
+                                                                    <span className="text-xs opacity-75">({displayLabel})</span>
+                                                                )}
+                                                                {!isDefault && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setEditingHoliday(entry.dateString)}
+                                                                        className="ml-0.5 hover:bg-black/10 rounded px-1 text-xs"
+                                                                        aria-label="Editar nombre"
+                                                                        title="Editar nombre"
+                                                                    >
+                                                                        ✏️
+                                                                    </button>
+                                                                )}
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => removeHoliday(entry.dateString)}
+                                                                    className="ml-1 hover:bg-black/10 rounded-full p-0.5 transition-colors"
+                                                                    aria-label="Eliminar feriado"
+                                                                >
+                                                                    <X className="w-3.5 h-3.5" />
+                                                                </button>
+                                                            </span>
+                                                        )}
+                                                        {isDefault && !isEditing && (
+                                                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-10">
+                                                                {defaultLabel}
+                                                                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-900"></div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Feriados por defecto de El Salvador (referencia) */}
+                                {(() => {
+                                    const currentDateStrings = new Set(holidaysEntries.map(e => e.dateString));
+                                    const missingDefaults = defaultHolidayEntries.filter(
+                                        (holiday) => !currentDateStrings.has(holiday.dateString)
+                                    );
+                                    if (missingDefaults.length === 0) return null;
+                                    
+                                    return (
+                                        <div className="pt-4 border-t border-slate-200">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <p className="text-sm font-medium text-slate-700">
+                                                    Feriados de El Salvador {effectiveYear} (no incluidos):
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const newEntries: HolidayEntry[] = missingDefaults.map(holiday => ({
+                                                            dateString: holiday.dateString,
+                                                            label: holiday.label,
+                                                        }));
+                                                        setHolidaysEntries([...holidaysEntries, ...newEntries].sort((a, b) => 
+                                                            a.dateString.localeCompare(b.dateString)
+                                                        ));
+                                                    }}
+                                                    className="text-xs text-indigo-600 hover:text-indigo-700 font-medium"
+                                                >
+                                                    Agregar todos
+                                                </button>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {missingDefaults.map((holiday) => (
+                                                    <div
+                                                        key={`holiday-default-${holiday.dateString}`}
+                                                        className="group relative"
+                                                    >
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => addHoliday(holiday.dateString, typeof holiday.label === 'string' ? holiday.label : undefined)}
+                                                            className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-600 hover:bg-indigo-100 hover:text-indigo-800 cursor-pointer transition-colors"
+                                                            title={`Click para agregar: ${holiday.label || ''}`}
+                                                        >
+                                                            {holiday.date ? format(holiday.date, 'dd MMM yyyy', { locale: es }) : format(parseISO(holiday.dateString), 'dd MMM yyyy', { locale: es })}
+                                                        </button>
+                                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-10">
+                                                            {holiday.label}
+                                                            <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-900"></div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* Invalid Holidays Display */}
+                                {invalidHolidayTokens.length > 0 && (
+                                    <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-4">
+                                        <p className="font-medium mb-2">Fechas inválidas ({invalidHolidayTokens.length}):</p>
+                                        <ul className="list-disc pl-4 space-y-1">
+                                            {invalidHolidayTokens.map((token, index) => (
+                                                <li key={`invalid-holiday-${token}-${index}`} className="font-mono">{token}</li>
+                                            ))}
+                                        </ul>
+                                        <p className="mt-2">Usa el formato YYYY-MM-DD.</p>
+                                    </div>
+                                )}
+
+                                {/* Info Box */}
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                    <p className="text-sm text-blue-800">
+                                        <strong>Tip:</strong> Los asuetos se excluyen del cálculo del cronograma. 
+                                        Pasa el cursor sobre los feriados por defecto para ver su nombre.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="flex items-center justify-end gap-3 p-6 border-t border-slate-200 bg-slate-50">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setHolidaysEntries([]);
+                                    setNewHolidayInput('');
+                                    setNewHolidayLabel('');
+                                    setShowHolidayInputError(false);
+                                    setIsHolidaysModalOpen(false);
+                                }}
+                                className="px-4 py-2 text-slate-700 hover:bg-slate-200 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                Limpiar
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setNewHolidayInput('');
+                                    setNewHolidayLabel('');
+                                    setShowHolidayInputError(false);
+                                    setIsHolidaysModalOpen(false);
+                                    toast.success('Configuración guardada', {
+                                        description: `Se han guardado ${holidaysEntries.length} asuetos correctamente.`,
+                                    });
+                                }}
+                                className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
+                            >
+                                Guardar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            <Toaster position="top-right" richColors />
         </div>
     );
 }
