@@ -126,8 +126,9 @@ Los alias personalizados se ingresan separados por comas y se combinan con la li
 
 1. Se analiza todo el archivo hasta encontrar una fila que contenga alguno de los alias (aunque no esté en la primera fila); esa fila se toma como encabezado.
 2. Se busca la primera columna cuyo título coincida con los alias configurados para nombre y esfuerzo.
-3. Si una fila no tiene nombre de tarea se asigna un identificador temporal (`Tarea sin nombre #N`).
-4. Los esfuerzos inválidos o ausentes se normalizan a `0` horas y se muestra una advertencia en la UI.
+3. Se registra el índice real de cada fila de datos para poder volver a escribir sobre la misma fila en la exportación.
+4. Si una fila no tiene nombre de tarea se asigna un identificador temporal (`Tarea sin nombre #N`).
+5. Los esfuerzos inválidos o ausentes se normalizan a `0` horas y se muestra una advertencia en la UI.
 
 ## Configuración de Usuario
 
@@ -174,7 +175,7 @@ Los alias personalizados se ingresan separados por comas y se combinan con la li
 ### 4. Exportación
 - Botón "Descargar Excel"
 - Genera archivo con el mismo nombre + prefijo "Cronograma_"
-- Mantiene todas las columnas originales + agrega fechas calculadas
+- Reescribe el mismo rango de la tabla original, respetando el orden/estilo de las columnas y agregando o actualizando únicamente `Fecha Inicio` y `Fecha Fin`.
 
 ## Requisitos del Sistema
 

@@ -10,7 +10,7 @@ Para el detalle funcional revisa `docs/requisitos-tecnicos.md`.
 - Configuración dinámica: fecha de inicio del proyecto, horas laborables por día, fines de semana opcionales y asuetos personalizables.
 - Algoritmo que acumula horas en la misma jornada y salta automáticamente fines de semana o feriados (ver `src/utils/scheduler.ts` y `src/utils/dateUtils.ts`).
 - Vista previa de las primeras 10 tareas procesadas y contador total.
-- Exportación inmediata del cronograma (`Cronograma_<archivo original>.xlsx`) manteniendo todas las columnas originales más `Fecha Inicio` y `Fecha Fin`.
+- Exportación inmediata del cronograma (`Cronograma_<archivo original>.xlsx`) respetando la tabla original y añadiendo/actualizando únicamente las columnas `Fecha Inicio` y `Fecha Fin` en la misma hoja, conservando los estilos existentes.
 - Compatibilidad con múltiples nombres de columnas para “Nombre Tarea” y “Esfuerzo”; el usuario puede añadir alias directamente desde la UI para adaptarse a plantillas existentes.
 - Auto-detección de encabezados: la app busca la fila que contiene los alias configurados (aunque no esté en la primera fila) y desde ahí construye la tabla.
 
@@ -52,7 +52,7 @@ La importación intenta mapear automáticamente columnas equivalentes:
 - Nombre de tarea: `Nombre Tarea`, `Tarea`, `Tareas`, `Task`, `Task Name`, `Actividad`, `Descripción`, `Nombre`.
 - Esfuerzo (horas): `Esfuerzo`, `Horas`, `Horas Estimadas`, `Effort`, `Estimated Hours`, `Duración`, `Duration`.
 
-Además, si tu tabla empieza más abajo o a la derecha, la aplicación analiza todas las filas hasta encontrar una que contenga alguno de los alias anteriores y la usa como encabezado antes de procesar los datos.
+Además, si tu tabla empieza más abajo o a la derecha, la aplicación analiza todas las filas hasta encontrar una que contenga alguno de los alias anteriores y la usa como encabezado antes de procesar los datos; al exportar se mantiene el orden y los estilos originales de tus columnas y solo se agregan/actualizan `Fecha Inicio` y `Fecha Fin`.
 En la tarjeta “Columnas soportadas” se pueden agregar alias adicionales separados por comas; se combinan con la lista base y se aplican inmediatamente a los datos cargados.
 
 ## Documentación adicional

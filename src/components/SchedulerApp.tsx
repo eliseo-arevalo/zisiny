@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import * as XLSX from 'xlsx';
 import { format, parseISO, isValid } from 'date-fns';
@@ -13,6 +13,15 @@ const DEFAULT_EFFORT_COLUMNS = ['Esfuerzo', 'Horas', 'Horas Estimadas', 'Effort'
 type ColumnVariants = {
     task: string[];
     effort: string[];
+};
+
+type ExtractedDataset = {
+    rows: Task[];
+    warnings: string[];
+    headerRow: string[];
+    headerIndex: number;
+    dataStartIndex: number;
+    rowMappings: number[];
 };
 
 const normalizeKey = (value: string): string =>
@@ -79,15 +88,19 @@ const findHeaderRowIndex = (rows: unknown[][], columns: ColumnVariants): number 
     return bestIndex;
 };
 
-const buildDatasetFromMatrix = (rows: unknown[][], columns: ColumnVariants) => {
-    if (rows.length === 0) {
+const buildDatasetFromMatrix = (matrix: unknown[][], columns: ColumnVariants): ExtractedDataset => {
+    if (matrix.length === 0) {
         return {
             rows: [],
-            warnings: [] as string[],
+            warnings: [],
+            headerRow: [],
+            headerIndex: 0,
+            dataStartIndex: 0,
+            rowMappings: [],
         };
     }
 
-    const headerIndex = findHeaderRowIndex(rows, columns);
+    const headerIndex = findHeaderRowIndex(matrix, columns);
     const warnings: string[] = [];
     const effectiveHeaderIndex = headerIndex === -1 ? 0 : headerIndex;
 
@@ -95,7 +108,7 @@ const buildDatasetFromMatrix = (rows: unknown[][], columns: ColumnVariants) => {
         warnings.push('No se encontró ninguna fila con encabezados compatibles; se asumió que la primera fila es el encabezado.');
     }
 
-    const headerRowSource = rows[effectiveHeaderIndex] ?? [];
+    const headerRowSource = matrix[effectiveHeaderIndex] ?? [];
     const headerRow = headerRowSource.map((value, index) => {
         const text = String(value ?? '').trim();
         return text || `Columna ${index + 1}`;
@@ -109,21 +122,32 @@ const buildDatasetFromMatrix = (rows: unknown[][], columns: ColumnVariants) => {
         return count === 0 ? normalized : `${normalized} (${count + 1})`;
     });
 
-    const dataRows = rows.slice(Math.min(effectiveHeaderIndex + 1, rows.length));
-    const extractedRows: Task[] = dataRows
-        .map((cells) => {
-            const rowObject: Task = {};
-            cells.forEach((cell, columnIndex) => {
-                const header = uniqueHeaders[columnIndex] ?? `Columna ${columnIndex + 1}`;
-                rowObject[header] = cell ?? '';
-            });
-            return rowObject;
-        })
-        .filter((row) => Object.values(row).some((value) => String(value ?? '').trim().length > 0));
+    const dataStartIndex = Math.min(effectiveHeaderIndex + 1, matrix.length);
+    const dataRows = matrix.slice(dataStartIndex);
+
+    const extractedRows: Task[] = [];
+    const rowMappings: number[] = [];
+
+    dataRows.forEach((cells, relativeIndex) => {
+        const rowObject: Task = {};
+        cells.forEach((cell, columnIndex) => {
+            const header = uniqueHeaders[columnIndex] ?? `Columna ${columnIndex + 1}`;
+            rowObject[header] = cell ?? '';
+        });
+        const hasContent = Object.values(rowObject).some((value) => String(value ?? '').trim().length > 0);
+        if (hasContent) {
+            extractedRows.push(rowObject);
+            rowMappings.push(dataStartIndex + relativeIndex);
+        }
+    });
 
     return {
         rows: extractedRows,
         warnings,
+        headerRow,
+        headerIndex: effectiveHeaderIndex,
+        dataStartIndex,
+        rowMappings,
     };
 };
 
@@ -206,6 +230,8 @@ export default function SchedulerApp() {
     // Data State
     const [rawTableRows, setRawTableRows] = useState<unknown[][]>([]);
     const [fileName, setFileName] = useState<string | null>(null);
+    const [sheetName, setSheetName] = useState<string>('Cronograma');
+    const workbookRef = useRef<XLSX.WorkBook | null>(null);
 
     const columnVariants = useMemo<ColumnVariants>(() => ({
         task: mergeColumnList(DEFAULT_TASK_COLUMNS, customTaskColumnsInput),
@@ -223,14 +249,18 @@ export default function SchedulerApp() {
         reader.onload = (e) => {
             const data = new Uint8Array(e.target?.result as ArrayBuffer);
             const workbook = XLSX.read(data, { type: 'array' });
-            const sheetName = workbook.SheetNames[0];
-            const worksheet = workbook.Sheets[sheetName];
+            workbookRef.current = workbook;
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
             const tableRows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
                 header: 1,
                 defval: '',
                 raw: false,
             });
             setRawTableRows(tableRows);
+            if (firstSheetName) {
+                setSheetName(firstSheetName);
+            }
         };
         reader.readAsArrayBuffer(file);
     }, []);
@@ -244,7 +274,7 @@ export default function SchedulerApp() {
         multiple: false
     });
 
-    const extractedDataset = useMemo(() => {
+    const extractedDataset = useMemo<ExtractedDataset>(() => {
         return buildDatasetFromMatrix(rawTableRows, columnVariants);
     }, [rawTableRows, columnVariants]);
 
@@ -328,19 +358,82 @@ export default function SchedulerApp() {
 
     // Export Handler
     const handleExport = () => {
-        if (processedTasks.length === 0) return;
+        if (processedTasks.length === 0 || !workbookRef.current) {
+            return;
+        }
 
-        // Format dates for Excel export
-        const exportData = processedTasks.map(task => ({
-            ...task,
-            'Fecha Inicio': task['Fecha Inicio'] ? format(task['Fecha Inicio'], 'yyyy-MM-dd') : '',
-            'Fecha Fin': task['Fecha Fin'] ? format(task['Fecha Fin'], 'yyyy-MM-dd') : '',
-        }));
+        const workbook = workbookRef.current;
+        const worksheet = workbook.Sheets[sheetName];
+        if (!worksheet) {
+            console.error('No se encontró la hoja original para escribir los datos.');
+            return;
+        }
 
-        const ws = XLSX.utils.json_to_sheet(exportData);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Cronograma");
-        XLSX.writeFile(wb, `Cronograma_${fileName || 'export.xlsx'}`);
+        const headerRowIndex = extractedDataset.headerIndex ?? 0;
+        const baseHeaderRow = extractedDataset.headerRow.length > 0
+            ? [...extractedDataset.headerRow]
+            : (rawTableRows[headerRowIndex]?.map((value) => String(value ?? '').trim()) ?? []);
+        const headerRow = [...baseHeaderRow];
+
+        const formatDateValue = (value?: Date | string) => {
+            if (!value) return '';
+            const dateValue = value instanceof Date ? value : new Date(value);
+            return isValid(dateValue) ? format(dateValue, 'yyyy-MM-dd') : '';
+        };
+
+        const existingRange = worksheet['!ref']
+            ? XLSX.utils.decode_range(worksheet['!ref'])
+            : { s: { r: headerRowIndex, c: 0 }, e: { r: headerRowIndex, c: Math.max(headerRow.length - 1, 0) } };
+
+        let maxRowUsed = existingRange.e.r;
+        let maxColUsed = existingRange.e.c;
+
+        const updateCell = (rowIndex: number, colIndex: number, value: string) => {
+            const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+            const existingCell = worksheet[address];
+            if (existingCell) {
+                existingCell.v = value;
+                existingCell.t = 's';
+            } else if (value !== '') {
+                worksheet[address] = { t: 's', v: value };
+            }
+            maxRowUsed = Math.max(maxRowUsed, rowIndex);
+            maxColUsed = Math.max(maxColUsed, colIndex);
+        };
+
+        const ensureColumnIndex = (label: string): number => {
+            const normalizedLabel = normalizeKey(label);
+            let index = headerRow.findIndex(
+                (cell) => normalizeKey(String(cell ?? '')) === normalizedLabel
+            );
+            if (index === -1) {
+                index = headerRow.length;
+                headerRow.push(label);
+            } else {
+                headerRow[index] = label;
+            }
+            updateCell(headerRowIndex, index, label);
+            return index;
+        };
+
+        const fechaInicioIndex = ensureColumnIndex('Fecha Inicio');
+        const fechaFinIndex = ensureColumnIndex('Fecha Fin');
+
+        processedTasks.forEach((task, taskIndex) => {
+            const rowIndex = extractedDataset.rowMappings[taskIndex] ?? (extractedDataset.dataStartIndex + taskIndex);
+            const fechaInicioValue = formatDateValue(task['Fecha Inicio'] as Date | string | undefined);
+            const fechaFinValue = formatDateValue(task['Fecha Fin'] as Date | string | undefined);
+            updateCell(rowIndex, fechaInicioIndex, fechaInicioValue);
+            updateCell(rowIndex, fechaFinIndex, fechaFinValue);
+        });
+
+        worksheet['!ref'] = XLSX.utils.encode_range({
+            s: { r: Math.min(existingRange.s.r, headerRowIndex), c: Math.min(existingRange.s.c, 0) },
+            e: { r: Math.max(maxRowUsed, existingRange.e.r), c: Math.max(maxColUsed, existingRange.e.c, headerRow.length - 1) },
+        });
+
+        const exportFileName = `Cronograma_${fileName || 'export.xlsx'}`;
+        XLSX.writeFile(workbook, exportFileName);
     };
 
     return (
