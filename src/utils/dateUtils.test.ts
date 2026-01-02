@@ -152,7 +152,7 @@ describe('dateUtils', () => {
 
             expect(() => {
                 getNextWorkingDay(startDate, allDaysHolidays, false);
-            }).toThrow('No se encontró un día laboral válido después de 365 intentos');
+            }).toThrow('No valid working day was found after 365 attempts');
         });
 
         it('should handle edge case with 364 consecutive holidays', () => {

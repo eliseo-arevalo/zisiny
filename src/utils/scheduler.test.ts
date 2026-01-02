@@ -13,7 +13,7 @@ describe('scheduler', () => {
             };
 
             expect(() => calculateSchedule(tasks, config)).toThrow(
-                'Las horas de trabajo por día deben ser mayores a 0'
+                'Work hours per day must be greater than 0'
             );
         });
 
@@ -27,7 +27,7 @@ describe('scheduler', () => {
             };
 
             expect(() => calculateSchedule(tasks, config)).toThrow(
-                'Las horas de trabajo por día deben ser mayores a 0'
+                'Work hours per day must be greater than 0'
             );
         });
 
@@ -41,7 +41,7 @@ describe('scheduler', () => {
             };
 
             expect(() => calculateSchedule(tasks, config)).toThrow(
-                'La fecha de inicio del proyecto no es válida'
+                'The project start date is not valid'
             );
         });
     });
