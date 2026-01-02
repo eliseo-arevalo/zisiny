@@ -55,13 +55,37 @@ jobs:
           script: |
             const fs = require('fs');
             const coverageSummary = fs.readFileSync('coverage-summary.md', 'utf8');
+            const commentMarker = '<!-- coverage-report-comment -->';
+            const body = `${commentMarker}\n${coverageSummary}`;
 
-            github.rest.issues.createComment({
+            // Find existing coverage comment
+            const { data: comments } = await github.rest.issues.listComments({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: coverageSummary
             });
+
+            const existingComment = comments.find(comment =>
+              comment.body?.includes(commentMarker)
+            );
+
+            if (existingComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                comment_id: existingComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
