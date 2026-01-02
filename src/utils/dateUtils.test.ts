@@ -142,7 +142,7 @@ describe('dateUtils', () => {
         it('should throw error when no working day found after 365 iterations', () => {
             // Create a scenario where every day for next year is a holiday
             const startDate = new Date(2024, 0, 1);
-            const allDaysHolidays = [];
+            const allDaysHolidays: Date[] = [];
 
             // Generate 400 consecutive holidays to ensure we exceed the limit
             for (let i = 1; i <= 400; i++) {
@@ -157,7 +157,7 @@ describe('dateUtils', () => {
 
         it('should handle edge case with 364 consecutive holidays', () => {
             const startDate = new Date(2024, 0, 1);
-            const manyHolidays = [];
+            const manyHolidays: Date[] = [];
 
             // Generate 364 consecutive holidays (just under the limit)
             for (let i = 1; i <= 364; i++) {
