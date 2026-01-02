@@ -57,7 +57,7 @@ Hay varias formas de contribuir a Zisiny:
 
 ## Configuración del entorno
 
-### Prerequisitos
+### Prerrequisitos
 
 - Node.js 22.12.0 o superior
 - pnpm 8+ (recomendado) o npm 9+
