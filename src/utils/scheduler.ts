@@ -20,6 +20,16 @@ export interface SchedulerConfig {
 export const calculateSchedule = (tasks: Task[], config: SchedulerConfig): Task[] => {
     const { projectStartDate, holidays, includeWeekends, workHoursPerDay } = config;
 
+    // Validation: workHoursPerDay must be positive
+    if (workHoursPerDay <= 0) {
+        throw new Error('Work hours per day must be greater than 0');
+    }
+
+    // Validation: projectStartDate must be a valid date
+    if (!(projectStartDate instanceof Date) || isNaN(projectStartDate.getTime())) {
+        throw new Error('The project start date is not valid');
+    }
+
     let currentDate = startOfDay(projectStartDate);
     let hoursUsedToday = 0;
 
@@ -54,20 +64,20 @@ export const calculateSchedule = (tasks: Task[], config: SchedulerConfig): Task[
                 hoursUsedToday = 0;
             }
 
-            // Double check if the new current date is valid (getNextWorkingDay ensures it, but good for safety)
-            // In the very first iteration, we already checked currentDate.
-
             const availableHours = workHoursPerDay - hoursUsedToday;
             const hoursToBill = Math.min(remainingEffort, availableHours);
 
             remainingEffort -= hoursToBill;
             hoursUsedToday += hoursToBill;
-
-            // If we still have effort remaining, it means we finished the day
-            // So we loop again, which will trigger the "move to next day" block at the start of the loop
         }
 
         const taskEndDate = new Date(currentDate);
+
+        // If the current day is now full, move to the next working day for the next task
+        if (hoursUsedToday >= workHoursPerDay) {
+            currentDate = getNextWorkingDay(currentDate, holidays, includeWeekends);
+            hoursUsedToday = 0;
+        }
 
         return {
             ...task,

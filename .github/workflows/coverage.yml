@@ -1,0 +1,95 @@
+name: Coverage Report
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests with coverage
+        run: pnpm test:coverage
+
+      - name: Generate coverage summary
+        id: coverage
+        run: |
+          echo "## 📊 Coverage Report" > coverage-summary.md
+          echo "" >> coverage-summary.md
+          echo "\`\`\`" >> coverage-summary.md
+          cat coverage/coverage-summary.json | jq -r '
+            .total |
+            "Statements: \(.statements.pct)%\nBranches: \(.branches.pct)%\nFunctions: \(.functions.pct)%\nLines: \(.lines.pct)%"
+          ' >> coverage-summary.md
+          echo "\`\`\`" >> coverage-summary.md
+          echo "" >> coverage-summary.md
+          echo "✅ Full coverage report available in artifacts" >> coverage-summary.md
+
+      - name: Comment coverage on PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            const coverageSummary = fs.readFileSync('coverage-summary.md', 'utf8');
+            const commentMarker = '<!-- coverage-report-comment -->';
+            const body = `${commentMarker}\n${coverageSummary}`;
+
+            // Find existing coverage comment
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            const existingComment = comments.find(comment =>
+              comment.body?.includes(commentMarker)
+            );
+
+            if (existingComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                comment_id: existingComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-html
+          path: coverage/
+          retention-days: 30
