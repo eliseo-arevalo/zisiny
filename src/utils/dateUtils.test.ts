@@ -144,8 +144,8 @@ describe('dateUtils', () => {
             const startDate = new Date(2024, 0, 1);
             const allDaysHolidays: Date[] = [];
 
-            // Generate 400 consecutive holidays to ensure we exceed the limit
-            for (let i = 1; i <= 400; i++) {
+            // Generate 366 consecutive holidays to ensure we exceed the 365-iteration limit
+            for (let i = 1; i <= 366; i++) {
                 const date = new Date(2024, 0, i);
                 allDaysHolidays.push(date);
             }

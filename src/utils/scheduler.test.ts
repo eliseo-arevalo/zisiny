@@ -179,6 +179,22 @@ describe('scheduler', () => {
             expect(result[0]['Fecha Fin']).toEqual(new Date(2024, 0, 2));
         });
 
+        it('should handle task with negative effort', () => {
+            const tasks: Task[] = [{ 'Nombre Tarea': 'Negative Task', 'Esfuerzo': -5 }];
+            const config: SchedulerConfig = {
+                projectStartDate: new Date(2024, 0, 2),
+                holidays: [],
+                includeWeekends: false,
+                workHoursPerDay: 8,
+            };
+
+            const result = calculateSchedule(tasks, config);
+
+            // Negative effort should be treated like 0 effort - task starts and ends same day
+            expect(result[0]['Fecha Inicio']).toEqual(new Date(2024, 0, 2));
+            expect(result[0]['Fecha Fin']).toEqual(new Date(2024, 0, 2));
+        });
+
         it('should handle missing effort (undefined)', () => {
             const tasks: Task[] = [{ 'Nombre Tarea': 'No Effort Task' }];
             const config: SchedulerConfig = {

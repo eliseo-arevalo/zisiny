@@ -29,7 +29,7 @@ export const getNextWorkingDay = (
 
     while (!isWorkingDay(nextDate, holidays, includeWeekends)) {
         iterations++;
-        if (iterations > MAX_ITERATIONS) {
+        if (iterations >= MAX_ITERATIONS) {
             throw new Error(
                 'No valid working day was found after 365 attempts. ' +
                 'Please verify that not all days of the year are configured as holidays.'
