@@ -22,12 +22,12 @@ export const calculateSchedule = (tasks: Task[], config: SchedulerConfig): Task[
 
     // Validation: workHoursPerDay must be positive
     if (workHoursPerDay <= 0) {
-        throw new Error('Las horas de trabajo por día deben ser mayores a 0');
+        throw new Error('Work hours per day must be greater than 0');
     }
 
     // Validation: projectStartDate must be a valid date
     if (!(projectStartDate instanceof Date) || isNaN(projectStartDate.getTime())) {
-        throw new Error('La fecha de inicio del proyecto no es válida');
+        throw new Error('The project start date is not valid');
     }
 
     let currentDate = startOfDay(projectStartDate);
