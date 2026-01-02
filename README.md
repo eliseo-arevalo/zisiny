@@ -6,6 +6,12 @@
 
 Transforma tus listas de tareas en cronogramas profesionales en segundos. Zisiny lee archivos Excel con estimaciones de esfuerzo y calcula automáticamente fechas de inicio y fin, respetando días laborables, feriados y acumulación de horas.
 
+[![Node Version](https://img.shields.io/badge/node-%3E%3D22.12.0-brightgreen?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=white)](https://react.dev/)
+[![Vite](https://img.shields.io/badge/Vite-7.2-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
+[![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+
 [Características](#-características) • [Inicio Rápido](#-inicio-rápido) • [Documentación](#-documentación) • [Roadmap](#-roadmap)
 
 </div>
@@ -242,7 +248,7 @@ Las contribuciones son bienvenidas. Para cambios mayores:
 
 ## 📄 Licencia
 
-Este proyecto es un side project personal. El código está disponible para referencia y uso educativo.
+Este proyecto está licenciado bajo la Licencia MIT. Consulta el archivo [LICENSE](./LICENSE) para más detalles.
 
 ---
 

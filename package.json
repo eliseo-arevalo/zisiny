@@ -3,6 +3,31 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "description": "Automatización inteligente de cronogramas de proyectos desde archivos Excel",
+  "keywords": [
+    "excel",
+    "scheduler",
+    "project-management",
+    "task-planning",
+    "cronograma",
+    "react",
+    "typescript",
+    "vite",
+    "exceljs"
+  ],
+  "author": {
+    "name": "Eliseo Arévalo",
+    "url": "https://github.com/eliseo-arevalo"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eliseo-arevalo/zisiny.git"
+  },
+  "bugs": {
+    "url": "https://github.com/eliseo-arevalo/zisiny/issues"
+  },
+  "homepage": "https://github.com/eliseo-arevalo/zisiny#readme",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
