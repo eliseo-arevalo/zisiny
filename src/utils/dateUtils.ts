@@ -31,8 +31,8 @@ export const getNextWorkingDay = (
         iterations++;
         if (iterations > MAX_ITERATIONS) {
             throw new Error(
-                'No se encontró un día laboral válido después de 365 intentos. ' +
-                'Verifica que no todos los días del año sean asuetos.'
+                'No valid working day was found after 365 attempts. ' +
+                'Please verify that not all days of the year are configured as holidays.'
             );
         }
         nextDate = addDays(nextDate, 1);
