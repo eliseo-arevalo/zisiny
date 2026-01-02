@@ -66,7 +66,7 @@ Todo en el navegador, sin instalaciones ni servidores.
 
 ## 🚀 Inicio Rápido
 
-### Prerequisitos
+### Prerrequisitos
 
 - Node.js 22.12+ ([Descargar](https://nodejs.org/))
 - pnpm 8+ (recomendado) o npm 9+
